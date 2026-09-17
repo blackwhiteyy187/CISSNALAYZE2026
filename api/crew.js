@@ -51,9 +51,6 @@ function cleanText(value) {
 
 // =========================================================
 // PARSE NAMA
-//
-// Contoh:
-// Troy Alexander Abednego - N2AR2311004
 // =========================================================
 
 function parsePersonName(rawName) {
@@ -85,9 +82,6 @@ function parsePersonName(rawName) {
 
 // =========================================================
 // PARSE ASSIGNMENT
-//
-// Contoh:
-// [NG Aruna 2] [On-Stage] Multimedia - Multimedia
 // =========================================================
 
 function parseAssignment(rawValue) {
@@ -104,13 +98,15 @@ function parseAssignment(rawValue) {
   let branch = "";
   let remaining = value;
 
-  // Ambil [NG Aruna 2]
-  const branchMatch = remaining.match(
-    /^\[([^\]]+)\]\s*/
-  );
+  const branchMatch =
+    remaining.match(
+      /^\[([^\]]+)\]\s*/
+    );
 
   if (branchMatch) {
-    branch = cleanText(branchMatch[1]);
+    branch = cleanText(
+      branchMatch[1]
+    );
 
     remaining = remaining
       .slice(branchMatch[0].length)
@@ -120,17 +116,21 @@ function parseAssignment(rawValue) {
   let field = remaining;
   let role = "";
 
-  // Cari separator terakhir " - "
   const separatorIndex =
     remaining.lastIndexOf(" - ");
 
   if (separatorIndex >= 0) {
     field = cleanText(
-      remaining.slice(0, separatorIndex)
+      remaining.slice(
+        0,
+        separatorIndex
+      )
     );
 
     role = cleanText(
-      remaining.slice(separatorIndex + 3)
+      remaining.slice(
+        separatorIndex + 3
+      )
     );
   }
 
@@ -145,10 +145,12 @@ function parseAssignment(rawValue) {
 // NORMALIZE BRANCH
 // =========================================================
 
-function normalizeBranch(branch, source) {
+function normalizeBranch(
+  branch,
+  source
+) {
   const value = cleanText(branch);
 
-  // Semua LGY masuk Legacy
   if (source === "LGY") {
     return LEGACY_BRANCH;
   }
@@ -168,7 +170,7 @@ function normalizeBranch(branch, source) {
 }
 
 // =========================================================
-// SOURCE DARI NAMA TAB
+// SOURCE DARI TAB
 // =========================================================
 
 function sourceFromTab(tabName) {
@@ -184,11 +186,12 @@ function sourceFromTab(tabName) {
 }
 
 // =========================================================
-// PRIORITY DARI NAMA TAB
+// PRIORITY DARI TAB
 // =========================================================
 
 function priorityFromTab(tabName) {
-  const match = tabName.match(/(\d+)$/);
+  const match =
+    tabName.match(/(\d+)$/);
 
   if (!match) {
     return null;
@@ -224,13 +227,16 @@ async function getGoogleSheets() {
   const auth =
     new google.auth.GoogleAuth({
       credentials: {
-        client_email: clientEmail,
+        client_email:
+          clientEmail,
+
         private_key:
           privateKey.replace(
             /\\n/g,
             "\n"
           ),
       },
+
       scopes: [
         "https://www.googleapis.com/auth/spreadsheets.readonly",
       ],
@@ -246,46 +252,77 @@ async function getGoogleSheets() {
 }
 
 // =========================================================
-// GET AVAILABLE SHEETS
+// GET SHEET METADATA
 // =========================================================
 
-async function getAvailableSheets(sheets) {
+async function getSheetMetadata(
+  sheets
+) {
   const response =
     await sheets.spreadsheets.get({
       spreadsheetId:
         SPREADSHEET_ID,
+
       fields:
         "sheets.properties",
     });
 
   return (
     response.data.sheets || []
-  )
-    .map(
+  ).map((sheet) => ({
+    sheetId:
+      sheet.properties?.sheetId,
+
+    title:
+      sheet.properties?.title,
+  }));
+}
+
+// =========================================================
+// FIND SHEET
+// =========================================================
+
+function findSheet(
+  sheetMetadata,
+  tabName
+) {
+  const exact =
+    sheetMetadata.find(
       (sheet) =>
-        sheet.properties?.title
-    )
-    .filter(Boolean);
+        sheet.title === tabName
+    );
+
+  if (exact) {
+    return exact;
+  }
+
+  const normalized =
+    cleanText(tabName)
+      .toLowerCase();
+
+  return sheetMetadata.find(
+    (sheet) =>
+      cleanText(
+        sheet.title
+      ).toLowerCase() ===
+      normalized
+  );
 }
 
 // =========================================================
 // READ SHEET
+//
+// Menggunakan sheetId + grid range.
+// Tidak menggunakan A:B lagi.
 // =========================================================
 
 async function readSheet(
   sheets,
-  tabName,
-  availableSheets
+  sheet
 ) {
-  if (
-    !availableSheets.includes(
-      tabName
-    )
-  ) {
+  if (!sheet) {
     throw new Error(
-      `Tab "${tabName}" tidak ditemukan. Tab yang tersedia: ${availableSheets.join(
-        ", "
-      )}`
+      "Sheet tidak ditemukan."
     );
   }
 
@@ -294,7 +331,18 @@ async function readSheet(
       spreadsheetId:
         SPREADSHEET_ID,
 
-      range: `'${tabName}'!A:B`,
+      range: {
+        sheetId:
+          sheet.sheetId,
+
+        startRowIndex: 0,
+
+        endRowIndex: 10000,
+
+        startColumnIndex: 0,
+
+        endColumnIndex: 2,
+      },
 
       valueRenderOption:
         "UNFORMATTED_VALUE",
@@ -316,14 +364,15 @@ function addRecord(
   tabName
 ) {
   const person =
-    parsePersonName(rawName);
+    parsePersonName(
+      rawName
+    );
 
   const assignment =
     parseAssignment(
       rawAssignment
     );
 
-  // Jangan masukkan data kosong
   if (
     !person.name ||
     !assignment.field
@@ -332,10 +381,14 @@ function addRecord(
   }
 
   const source =
-    sourceFromTab(tabName);
+    sourceFromTab(
+      tabName
+    );
 
   const priority =
-    priorityFromTab(tabName);
+    priorityFromTab(
+      tabName
+    );
 
   if (
     !source ||
@@ -350,10 +403,6 @@ function addRecord(
       source
     );
 
-  // =======================================================
-  // VALIDASI LEGACY
-  // =======================================================
-
   if (source === "LGY") {
     if (
       branch !==
@@ -362,10 +411,6 @@ function addRecord(
       return;
     }
   }
-
-  // =======================================================
-  // VALIDASI NEXTGEN
-  // =======================================================
 
   if (source === "NG") {
     if (
@@ -378,14 +423,26 @@ function addRecord(
   }
 
   records.push({
-    name: person.name,
-    code: person.code,
+    name:
+      person.name,
+
+    code:
+      person.code,
+
     branch,
-    field: assignment.field,
-    role: assignment.role,
+
+    field:
+      assignment.field,
+
+    role:
+      assignment.role,
+
     priority,
+
     source,
-    sourceTab: tabName,
+
+    sourceTab:
+      tabName,
   });
 }
 
@@ -393,11 +450,15 @@ function addRecord(
 // GROUP PEOPLE
 // =========================================================
 
-function buildPeople(records) {
+function buildPeople(
+  records
+) {
   const peopleMap =
     new Map();
 
-  for (const record of records) {
+  for (
+    const record of records
+  ) {
     const key = [
       record.source,
       record.branch,
@@ -407,27 +468,35 @@ function buildPeople(records) {
       .join("__")
       .toLowerCase();
 
-    // Buat person baru
     if (
       !peopleMap.has(key)
     ) {
-      peopleMap.set(key, {
-        name: record.name,
-        code: record.code,
-        branch: record.branch,
-        source: record.source,
-        assignments: [],
-        priorities: [],
-        fields: [],
-      });
+      peopleMap.set(
+        key,
+        {
+          name:
+            record.name,
+
+          code:
+            record.code,
+
+          branch:
+            record.branch,
+
+          source:
+            record.source,
+
+          assignments: [],
+
+          priorities: [],
+
+          fields: [],
+        }
+      );
     }
 
     const person =
       peopleMap.get(key);
-
-    // =====================================================
-    // JANGAN DUPLIKAT ASSIGNMENT
-    // =====================================================
 
     const assignmentExists =
       person.assignments.some(
@@ -444,17 +513,19 @@ function buildPeople(records) {
       !assignmentExists
     ) {
       person.assignments.push({
-        field: record.field,
-        role: record.role,
-        priority: record.priority,
+        field:
+          record.field,
+
+        role:
+          record.role,
+
+        priority:
+          record.priority,
+
         sourceTab:
           record.sourceTab,
       });
     }
-
-    // =====================================================
-    // SIMPAN SEMUA PRIORITY
-    // =====================================================
 
     if (
       !person.priorities.includes(
@@ -465,10 +536,6 @@ function buildPeople(records) {
         record.priority
       );
     }
-
-    // =====================================================
-    // SIMPAN SEMUA FIELD
-    // =====================================================
 
     if (
       !person.fields.includes(
@@ -487,20 +554,18 @@ function buildPeople(records) {
     .map((person) => ({
       ...person,
 
-      // Priority 1 → 2 → 3 → dst.
       priorities:
         person.priorities.sort(
-          (a, b) => a - b
+          (a, b) =>
+            a - b
         ),
 
-      // Field alphabetic
       fields:
         person.fields.sort(
           (a, b) =>
             a.localeCompare(b)
         ),
 
-      // Assignment berdasarkan priority
       assignments:
         person.assignments.sort(
           (a, b) =>
@@ -511,8 +576,6 @@ function buildPeople(records) {
             )
         ),
     }))
-
-    // Sort nama A-Z
     .sort((a, b) =>
       a.name.localeCompare(
         b.name
@@ -532,14 +595,12 @@ function buildPayload(
 
   const branches = {};
 
-  // =======================================================
-  // BUAT STRUKTUR CABANG
-  // =======================================================
-
-  for (const branch of [
-    LEGACY_BRANCH,
-    ...NEXTGEN_BRANCHES,
-  ]) {
+  for (
+    const branch of [
+      LEGACY_BRANCH,
+      ...NEXTGEN_BRANCHES,
+    ]
+  ) {
     branches[branch] = {
       branch,
 
@@ -550,15 +611,14 @@ function buildPayload(
           : "NG",
 
       people: [],
+
       fields: [],
     };
   }
 
-  // =======================================================
-  // MASUKKAN PEOPLE KE CABANG
-  // =======================================================
-
-  for (const person of people) {
+  for (
+    const person of people
+  ) {
     if (
       !branches[
         person.branch
@@ -569,13 +629,14 @@ function buildPayload(
 
     branches[
       person.branch
-    ].people.push(person);
+    ].people.push(
+      person
+    );
 
-    // =====================================================
-    // FIELD YANG TERSEDIA DI CABANG
-    // =====================================================
-
-    for (const field of person.fields) {
+    for (
+      const field of
+        person.fields
+    ) {
       if (
         !branches[
           person.branch
@@ -592,24 +653,17 @@ function buildPayload(
     }
   }
 
-  // =======================================================
-  // SORT FIELD
-  // =======================================================
-
   for (
-    const branch of Object.values(
-      branches
-    )
+    const branch of
+      Object.values(
+        branches
+      )
   ) {
     branch.fields.sort(
       (a, b) =>
         a.localeCompare(b)
     );
   }
-
-  // =======================================================
-  // RETURN PAYLOAD
-  // =======================================================
 
   return {
     syncedAt:
@@ -653,13 +707,6 @@ export default async function handler(
   res
 ) {
   try {
-    // =====================================================
-    // FORCE REFRESH
-    //
-    // /api/crew?refresh=1
-    // /api/crew?refresh=true
-    // =====================================================
-
     const forceRefresh =
       req.query?.refresh ===
         "1" ||
@@ -670,7 +717,7 @@ export default async function handler(
       Date.now();
 
     // =====================================================
-    // CACHE 5 MENIT
+    // CACHE
     // =====================================================
 
     if (
@@ -695,9 +742,9 @@ export default async function handler(
     const sheets =
       await getGoogleSheets();
 
-    // Ambil daftar tab yang benar-benar ada
-    const availableSheets =
-      await getAvailableSheets(
+    // Ambil semua metadata tab
+    const sheetMetadata =
+      await getSheetMetadata(
         sheets
       );
 
@@ -711,11 +758,27 @@ export default async function handler(
       const tabName of
         LEGACY_TABS
     ) {
+      const sheet =
+        findSheet(
+          sheetMetadata,
+          tabName
+        );
+
+      if (!sheet) {
+        throw new Error(
+          `Tab "${tabName}" tidak ditemukan di spreadsheet. Tab yang tersedia: ${sheetMetadata
+            .map(
+              (item) =>
+                item.title
+            )
+            .join(", ")}`
+        );
+      }
+
       const rows =
         await readSheet(
           sheets,
-          tabName,
-          availableSheets
+          sheet
         );
 
       for (
@@ -744,11 +807,27 @@ export default async function handler(
       const tabName of
         NEXTGEN_TABS
     ) {
+      const sheet =
+        findSheet(
+          sheetMetadata,
+          tabName
+        );
+
+      if (!sheet) {
+        throw new Error(
+          `Tab "${tabName}" tidak ditemukan di spreadsheet. Tab yang tersedia: ${sheetMetadata
+            .map(
+              (item) =>
+                item.title
+            )
+            .join(", ")}`
+        );
+      }
+
       const rows =
         await readSheet(
           sheets,
-          tabName,
-          availableSheets
+          sheet
         );
 
       for (
@@ -779,7 +858,7 @@ export default async function handler(
       );
 
     // =====================================================
-    // UPDATE CACHE
+    // CACHE
     // =====================================================
 
     cache = {
