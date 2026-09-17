@@ -98,15 +98,12 @@ function parseAssignment(rawValue) {
   let branch = "";
   let remaining = value;
 
-  const branchMatch =
-    remaining.match(
-      /^\[([^\]]+)\]\s*/
-    );
+  const branchMatch = remaining.match(
+    /^\[([^\]]+)\]\s*/
+  );
 
   if (branchMatch) {
-    branch = cleanText(
-      branchMatch[1]
-    );
+    branch = cleanText(branchMatch[1]);
 
     remaining = remaining
       .slice(branchMatch[0].length)
@@ -121,16 +118,11 @@ function parseAssignment(rawValue) {
 
   if (separatorIndex >= 0) {
     field = cleanText(
-      remaining.slice(
-        0,
-        separatorIndex
-      )
+      remaining.slice(0, separatorIndex)
     );
 
     role = cleanText(
-      remaining.slice(
-        separatorIndex + 3
-      )
+      remaining.slice(separatorIndex + 3)
     );
   }
 
@@ -145,10 +137,7 @@ function parseAssignment(rawValue) {
 // NORMALIZE BRANCH
 // =========================================================
 
-function normalizeBranch(
-  branch,
-  source
-) {
+function normalizeBranch(branch, source) {
   const value = cleanText(branch);
 
   if (source === "LGY") {
@@ -159,12 +148,11 @@ function normalizeBranch(
     return "";
   }
 
-  const matched =
-    NEXTGEN_BRANCHES.find(
-      (item) =>
-        item.toLowerCase() ===
-        value.toLowerCase()
-    );
+  const matched = NEXTGEN_BRANCHES.find(
+    (item) =>
+      item.toLowerCase() ===
+      value.toLowerCase()
+  );
 
   return matched || value;
 }
@@ -190,8 +178,7 @@ function sourceFromTab(tabName) {
 // =========================================================
 
 function priorityFromTab(tabName) {
-  const match =
-    tabName.match(/(\d+)$/);
+  const match = tabName.match(/(\d+)$/);
 
   if (!match) {
     return null;
@@ -227,14 +214,11 @@ async function getGoogleSheets() {
   const auth =
     new google.auth.GoogleAuth({
       credentials: {
-        client_email:
-          clientEmail,
-
-        private_key:
-          privateKey.replace(
-            /\\n/g,
-            "\n"
-          ),
+        client_email: clientEmail,
+        private_key: privateKey.replace(
+          /\\n/g,
+          "\n"
+        ),
       },
 
       scopes: [
@@ -252,97 +236,21 @@ async function getGoogleSheets() {
 }
 
 // =========================================================
-// GET SHEET METADATA
-// =========================================================
-
-async function getSheetMetadata(
-  sheets
-) {
-  const response =
-    await sheets.spreadsheets.get({
-      spreadsheetId:
-        SPREADSHEET_ID,
-
-      fields:
-        "sheets.properties",
-    });
-
-  return (
-    response.data.sheets || []
-  ).map((sheet) => ({
-    sheetId:
-      sheet.properties?.sheetId,
-
-    title:
-      sheet.properties?.title,
-  }));
-}
-
-// =========================================================
-// FIND SHEET
-// =========================================================
-
-function findSheet(
-  sheetMetadata,
-  tabName
-) {
-  const exact =
-    sheetMetadata.find(
-      (sheet) =>
-        sheet.title === tabName
-    );
-
-  if (exact) {
-    return exact;
-  }
-
-  const normalized =
-    cleanText(tabName)
-      .toLowerCase();
-
-  return sheetMetadata.find(
-    (sheet) =>
-      cleanText(
-        sheet.title
-      ).toLowerCase() ===
-      normalized
-  );
-}
-
-// =========================================================
 // READ SHEET
-//
-// Menggunakan sheetId + grid range.
-// Tidak menggunakan A:B lagi.
 // =========================================================
 
 async function readSheet(
   sheets,
-  sheet
+  tabName
 ) {
-  if (!sheet) {
-    throw new Error(
-      "Sheet tidak ditemukan."
-    );
-  }
-
   const response =
     await sheets.spreadsheets.values.get({
       spreadsheetId:
         SPREADSHEET_ID,
 
-      range: {
-        sheetId:
-          sheet.sheetId,
-
-        startRowIndex: 0,
-
-        endRowIndex: 10000,
-
-        startColumnIndex: 0,
-
-        endColumnIndex: 2,
-      },
+      // Jangan gunakan A:B
+      // Gunakan range konkret
+      range: `'${tabName}'!A1:B10000`,
 
       valueRenderOption:
         "UNFORMATTED_VALUE",
@@ -364,14 +272,10 @@ function addRecord(
   tabName
 ) {
   const person =
-    parsePersonName(
-      rawName
-    );
+    parsePersonName(rawName);
 
   const assignment =
-    parseAssignment(
-      rawAssignment
-    );
+    parseAssignment(rawAssignment);
 
   if (
     !person.name ||
@@ -381,14 +285,10 @@ function addRecord(
   }
 
   const source =
-    sourceFromTab(
-      tabName
-    );
+    sourceFromTab(tabName);
 
   const priority =
-    priorityFromTab(
-      tabName
-    );
+    priorityFromTab(tabName);
 
   if (
     !source ||
@@ -403,14 +303,21 @@ function addRecord(
       source
     );
 
+  // =======================================================
+  // VALIDASI LEGACY
+  // =======================================================
+
   if (source === "LGY") {
     if (
-      branch !==
-      LEGACY_BRANCH
+      branch !== LEGACY_BRANCH
     ) {
       return;
     }
   }
+
+  // =======================================================
+  // VALIDASI NEXTGEN
+  // =======================================================
 
   if (source === "NG") {
     if (
@@ -450,9 +357,7 @@ function addRecord(
 // GROUP PEOPLE
 // =========================================================
 
-function buildPeople(
-  records
-) {
+function buildPeople(records) {
   const peopleMap =
     new Map();
 
@@ -587,9 +492,7 @@ function buildPeople(
 // BUILD PAYLOAD
 // =========================================================
 
-function buildPayload(
-  records
-) {
+function buildPayload(records) {
   const people =
     buildPeople(records);
 
@@ -629,9 +532,7 @@ function buildPayload(
 
     branches[
       person.branch
-    ].people.push(
-      person
-    );
+    ].people.push(person);
 
     for (
       const field of
@@ -708,16 +609,14 @@ export default async function handler(
 ) {
   try {
     const forceRefresh =
-      req.query?.refresh ===
-        "1" ||
-      req.query?.refresh ===
-        "true";
+      req.query?.refresh === "1" ||
+      req.query?.refresh === "true";
 
     const now =
       Date.now();
 
     // =====================================================
-    // CACHE
+    // CACHE 5 MENIT
     // =====================================================
 
     if (
@@ -742,12 +641,6 @@ export default async function handler(
     const sheets =
       await getGoogleSheets();
 
-    // Ambil semua metadata tab
-    const sheetMetadata =
-      await getSheetMetadata(
-        sheets
-      );
-
     const records = [];
 
     // =====================================================
@@ -758,27 +651,10 @@ export default async function handler(
       const tabName of
         LEGACY_TABS
     ) {
-      const sheet =
-        findSheet(
-          sheetMetadata,
-          tabName
-        );
-
-      if (!sheet) {
-        throw new Error(
-          `Tab "${tabName}" tidak ditemukan di spreadsheet. Tab yang tersedia: ${sheetMetadata
-            .map(
-              (item) =>
-                item.title
-            )
-            .join(", ")}`
-        );
-      }
-
       const rows =
         await readSheet(
           sheets,
-          sheet
+          tabName
         );
 
       for (
@@ -807,27 +683,10 @@ export default async function handler(
       const tabName of
         NEXTGEN_TABS
     ) {
-      const sheet =
-        findSheet(
-          sheetMetadata,
-          tabName
-        );
-
-      if (!sheet) {
-        throw new Error(
-          `Tab "${tabName}" tidak ditemukan di spreadsheet. Tab yang tersedia: ${sheetMetadata
-            .map(
-              (item) =>
-                item.title
-            )
-            .join(", ")}`
-        );
-      }
-
       const rows =
         await readSheet(
           sheets,
-          sheet
+          tabName
         );
 
       for (
@@ -858,7 +717,7 @@ export default async function handler(
       );
 
     // =====================================================
-    // CACHE
+    // UPDATE CACHE
     // =====================================================
 
     cache = {
