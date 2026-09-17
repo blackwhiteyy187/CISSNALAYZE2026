@@ -54,10 +54,6 @@ function cleanText(value) {
 //
 // Contoh:
 // Troy Alexander Abednego - N2AR2311004
-//
-// Hasil:
-// name = Troy Alexander Abednego
-// code = N2AR2311004
 // =========================================================
 
 function parsePersonName(rawName) {
@@ -92,11 +88,6 @@ function parsePersonName(rawName) {
 //
 // Contoh:
 // [NG Aruna 2] [On-Stage] Multimedia - Multimedia
-//
-// Hasil:
-// branch = NG Aruna 2
-// field  = [On-Stage] Multimedia
-// role   = Multimedia
 // =========================================================
 
 function parseAssignment(rawValue) {
@@ -130,7 +121,8 @@ function parseAssignment(rawValue) {
   let role = "";
 
   // Cari separator terakhir " - "
-  const separatorIndex = remaining.lastIndexOf(" - ");
+  const separatorIndex =
+    remaining.lastIndexOf(" - ");
 
   if (separatorIndex >= 0) {
     field = cleanText(
@@ -165,10 +157,12 @@ function normalizeBranch(branch, source) {
     return "";
   }
 
-  const matched = NEXTGEN_BRANCHES.find(
-    (item) =>
-      item.toLowerCase() === value.toLowerCase()
-  );
+  const matched =
+    NEXTGEN_BRANCHES.find(
+      (item) =>
+        item.toLowerCase() ===
+        value.toLowerCase()
+    );
 
   return matched || value;
 }
@@ -191,10 +185,6 @@ function sourceFromTab(tabName) {
 
 // =========================================================
 // PRIORITY DARI NAMA TAB
-//
-// [LGY] PrioritasDivisi1 -> 1
-// [LGY] PrioritasDivisi7 -> 7
-// [NG] PrioritasSubDivisi3 -> 3
 // =========================================================
 
 function priorityFromTab(tabName) {
@@ -231,17 +221,23 @@ async function getGoogleSheets() {
     );
   }
 
-  const auth = new google.auth.GoogleAuth({
-    credentials: {
-      client_email: clientEmail,
-      private_key: privateKey.replace(/\\n/g, "\n"),
-    },
-    scopes: [
-      "https://www.googleapis.com/auth/spreadsheets.readonly",
-    ],
-  });
+  const auth =
+    new google.auth.GoogleAuth({
+      credentials: {
+        client_email: clientEmail,
+        private_key:
+          privateKey.replace(
+            /\\n/g,
+            "\n"
+          ),
+      },
+      scopes: [
+        "https://www.googleapis.com/auth/spreadsheets.readonly",
+      ],
+    });
 
-  const client = await auth.getClient();
+  const client =
+    await auth.getClient();
 
   return google.sheets({
     version: "v4",
@@ -250,19 +246,63 @@ async function getGoogleSheets() {
 }
 
 // =========================================================
-// READ SHEET
-// Hanya kolom A dan B
+// GET AVAILABLE SHEETS
 // =========================================================
 
-async function readSheet(sheets, tabName) {
+async function getAvailableSheets(sheets) {
   const response =
-    await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_ID,
-      range: `'${tabName}'!A:B`,
-      valueRenderOption: "UNFORMATTED_VALUE",
+    await sheets.spreadsheets.get({
+      spreadsheetId:
+        SPREADSHEET_ID,
+      fields:
+        "sheets.properties",
     });
 
-  return response.data.values || [];
+  return (
+    response.data.sheets || []
+  )
+    .map(
+      (sheet) =>
+        sheet.properties?.title
+    )
+    .filter(Boolean);
+}
+
+// =========================================================
+// READ SHEET
+// =========================================================
+
+async function readSheet(
+  sheets,
+  tabName,
+  availableSheets
+) {
+  if (
+    !availableSheets.includes(
+      tabName
+    )
+  ) {
+    throw new Error(
+      `Tab "${tabName}" tidak ditemukan. Tab yang tersedia: ${availableSheets.join(
+        ", "
+      )}`
+    );
+  }
+
+  const response =
+    await sheets.spreadsheets.values.get({
+      spreadsheetId:
+        SPREADSHEET_ID,
+
+      range: `'${tabName}'!A:B`,
+
+      valueRenderOption:
+        "UNFORMATTED_VALUE",
+    });
+
+  return (
+    response.data.values || []
+  );
 }
 
 // =========================================================
@@ -275,34 +315,50 @@ function addRecord(
   rawAssignment,
   tabName
 ) {
-  const person = parsePersonName(rawName);
+  const person =
+    parsePersonName(rawName);
 
   const assignment =
-    parseAssignment(rawAssignment);
+    parseAssignment(
+      rawAssignment
+    );
 
   // Jangan masukkan data kosong
-  if (!person.name || !assignment.field) {
+  if (
+    !person.name ||
+    !assignment.field
+  ) {
     return;
   }
 
-  const source = sourceFromTab(tabName);
-  const priority = priorityFromTab(tabName);
+  const source =
+    sourceFromTab(tabName);
 
-  if (!source || !priority) {
+  const priority =
+    priorityFromTab(tabName);
+
+  if (
+    !source ||
+    !priority
+  ) {
     return;
   }
 
-  const branch = normalizeBranch(
-    assignment.branch,
-    source
-  );
+  const branch =
+    normalizeBranch(
+      assignment.branch,
+      source
+    );
 
   // =======================================================
   // VALIDASI LEGACY
   // =======================================================
 
   if (source === "LGY") {
-    if (branch !== LEGACY_BRANCH) {
+    if (
+      branch !==
+      LEGACY_BRANCH
+    ) {
       return;
     }
   }
@@ -312,7 +368,11 @@ function addRecord(
   // =======================================================
 
   if (source === "NG") {
-    if (!NEXTGEN_BRANCHES.includes(branch)) {
+    if (
+      !NEXTGEN_BRANCHES.includes(
+        branch
+      )
+    ) {
       return;
     }
   }
@@ -334,19 +394,23 @@ function addRecord(
 // =========================================================
 
 function buildPeople(records) {
-  const peopleMap = new Map();
+  const peopleMap =
+    new Map();
 
   for (const record of records) {
     const key = [
       record.source,
       record.branch,
-      record.code || record.name,
+      record.code ||
+        record.name,
     ]
       .join("__")
       .toLowerCase();
 
     // Buat person baru
-    if (!peopleMap.has(key)) {
+    if (
+      !peopleMap.has(key)
+    ) {
       peopleMap.set(key, {
         name: record.name,
         code: record.code,
@@ -358,7 +422,8 @@ function buildPeople(records) {
       });
     }
 
-    const person = peopleMap.get(key);
+    const person =
+      peopleMap.get(key);
 
     // =====================================================
     // JANGAN DUPLIKAT ASSIGNMENT
@@ -367,17 +432,23 @@ function buildPeople(records) {
     const assignmentExists =
       person.assignments.some(
         (item) =>
-          item.field === record.field &&
-          item.role === record.role &&
-          item.priority === record.priority
+          item.field ===
+            record.field &&
+          item.role ===
+            record.role &&
+          item.priority ===
+            record.priority
       );
 
-    if (!assignmentExists) {
+    if (
+      !assignmentExists
+    ) {
       person.assignments.push({
         field: record.field,
         role: record.role,
         priority: record.priority,
-        sourceTab: record.sourceTab,
+        sourceTab:
+          record.sourceTab,
       });
     }
 
@@ -400,38 +471,52 @@ function buildPeople(records) {
     // =====================================================
 
     if (
-      !person.fields.includes(record.field)
+      !person.fields.includes(
+        record.field
+      )
     ) {
-      person.fields.push(record.field);
+      person.fields.push(
+        record.field
+      );
     }
   }
 
-  return Array.from(peopleMap.values())
+  return Array.from(
+    peopleMap.values()
+  )
     .map((person) => ({
       ...person,
 
       // Priority 1 → 2 → 3 → dst.
-      priorities: person.priorities.sort(
-        (a, b) => a - b
-      ),
+      priorities:
+        person.priorities.sort(
+          (a, b) => a - b
+        ),
 
       // Field alphabetic
-      fields: person.fields.sort(
-        (a, b) => a.localeCompare(b)
-      ),
+      fields:
+        person.fields.sort(
+          (a, b) =>
+            a.localeCompare(b)
+        ),
 
       // Assignment berdasarkan priority
       assignments:
         person.assignments.sort(
           (a, b) =>
-            a.priority - b.priority ||
-            a.field.localeCompare(b.field)
+            a.priority -
+              b.priority ||
+            a.field.localeCompare(
+              b.field
+            )
         ),
     }))
 
     // Sort nama A-Z
     .sort((a, b) =>
-      a.name.localeCompare(b.name)
+      a.name.localeCompare(
+        b.name
+      )
     );
 }
 
@@ -439,8 +524,11 @@ function buildPeople(records) {
 // BUILD PAYLOAD
 // =========================================================
 
-function buildPayload(records) {
-  const people = buildPeople(records);
+function buildPayload(
+  records
+) {
+  const people =
+    buildPeople(records);
 
   const branches = {};
 
@@ -454,10 +542,13 @@ function buildPayload(records) {
   ]) {
     branches[branch] = {
       branch,
+
       source:
-        branch === LEGACY_BRANCH
+        branch ===
+        LEGACY_BRANCH
           ? "LGY"
           : "NG",
+
       people: [],
       fields: [],
     };
@@ -468,13 +559,17 @@ function buildPayload(records) {
   // =======================================================
 
   for (const person of people) {
-    if (!branches[person.branch]) {
+    if (
+      !branches[
+        person.branch
+      ]
+    ) {
       continue;
     }
 
-    branches[person.branch].people.push(
-      person
-    );
+    branches[
+      person.branch
+    ].people.push(person);
 
     // =====================================================
     // FIELD YANG TERSEDIA DI CABANG
@@ -484,11 +579,15 @@ function buildPayload(records) {
       if (
         !branches[
           person.branch
-        ].fields.includes(field)
+        ].fields.includes(
+          field
+        )
       ) {
         branches[
           person.branch
-        ].fields.push(field);
+        ].fields.push(
+          field
+        );
       }
     }
   }
@@ -497,9 +596,14 @@ function buildPayload(records) {
   // SORT FIELD
   // =======================================================
 
-  for (const branch of Object.values(branches)) {
-    branch.fields.sort((a, b) =>
-      a.localeCompare(b)
+  for (
+    const branch of Object.values(
+      branches
+    )
+  ) {
+    branch.fields.sort(
+      (a, b) =>
+        a.localeCompare(b)
     );
   }
 
@@ -508,9 +612,11 @@ function buildPayload(records) {
   // =======================================================
 
   return {
-    syncedAt: new Date().toISOString(),
+    syncedAt:
+      new Date().toISOString(),
 
-    spreadsheetId: SPREADSHEET_ID,
+    spreadsheetId:
+      SPREADSHEET_ID,
 
     tabsScanned: [
       ...LEGACY_TABS,
@@ -518,15 +624,23 @@ function buildPayload(records) {
     ],
 
     sources: {
-      Legacy: LEGACY_TABS,
-      NextGen: NEXTGEN_TABS,
+      Legacy:
+        LEGACY_TABS,
+
+      NextGen:
+        NEXTGEN_TABS,
     },
 
-    branches: Object.values(branches),
+    branches:
+      Object.values(
+        branches
+      ),
 
-    totalPeople: people.length,
+    totalPeople:
+      people.length,
 
-    totalRecords: records.length,
+    totalRecords:
+      records.length,
   };
 }
 
@@ -547,10 +661,13 @@ export default async function handler(
     // =====================================================
 
     const forceRefresh =
-      req.query?.refresh === "1" ||
-      req.query?.refresh === "true";
+      req.query?.refresh ===
+        "1" ||
+      req.query?.refresh ===
+        "true";
 
-    const now = Date.now();
+    const now =
+      Date.now();
 
     // =====================================================
     // CACHE 5 MENIT
@@ -559,40 +676,56 @@ export default async function handler(
     if (
       !forceRefresh &&
       cache.data &&
-      now - cache.timestamp <
+      now -
+        cache.timestamp <
         CACHE_TTL_MS
     ) {
-      return res.status(200).json({
-        ...cache.data,
-        cached: true,
-      });
+      return res
+        .status(200)
+        .json({
+          ...cache.data,
+          cached: true,
+        });
     }
 
     // =====================================================
     // GOOGLE SHEETS
     // =====================================================
 
-    const sheets = await getGoogleSheets();
+    const sheets =
+      await getGoogleSheets();
+
+    // Ambil daftar tab yang benar-benar ada
+    const availableSheets =
+      await getAvailableSheets(
+        sheets
+      );
 
     const records = [];
 
     // =====================================================
     // BACA LEGACY
-    // [LGY] PrioritasDivisi1 - 7
     // =====================================================
 
-    for (const tabName of LEGACY_TABS) {
-      const rows = await readSheet(
-        sheets,
-        tabName
-      );
+    for (
+      const tabName of
+        LEGACY_TABS
+    ) {
+      const rows =
+        await readSheet(
+          sheets,
+          tabName,
+          availableSheets
+        );
 
       for (
         let rowIndex = 1;
-        rowIndex < rows.length;
+        rowIndex <
+          rows.length;
         rowIndex++
       ) {
-        const row = rows[rowIndex];
+        const row =
+          rows[rowIndex];
 
         addRecord(
           records,
@@ -605,21 +738,27 @@ export default async function handler(
 
     // =====================================================
     // BACA NEXTGEN
-    // [NG] PrioritasSubDivisi1 - 7
     // =====================================================
 
-    for (const tabName of NEXTGEN_TABS) {
-      const rows = await readSheet(
-        sheets,
-        tabName
-      );
+    for (
+      const tabName of
+        NEXTGEN_TABS
+    ) {
+      const rows =
+        await readSheet(
+          sheets,
+          tabName,
+          availableSheets
+        );
 
       for (
         let rowIndex = 1;
-        rowIndex < rows.length;
+        rowIndex <
+          rows.length;
         rowIndex++
       ) {
-        const row = rows[rowIndex];
+        const row =
+          rows[rowIndex];
 
         addRecord(
           records,
@@ -634,7 +773,10 @@ export default async function handler(
     // BUILD DATA
     // =====================================================
 
-    const payload = buildPayload(records);
+    const payload =
+      buildPayload(
+        records
+      );
 
     // =====================================================
     // UPDATE CACHE
@@ -649,10 +791,12 @@ export default async function handler(
     // RESPONSE
     // =====================================================
 
-    return res.status(200).json({
-      ...payload,
-      cached: false,
-    });
+    return res
+      .status(200)
+      .json({
+        ...payload,
+        cached: false,
+      });
 
   } catch (error) {
     console.error(
@@ -660,16 +804,21 @@ export default async function handler(
       error
     );
 
-    return res.status(500).json({
-      error: "Gagal mengambil data Crew",
-      message:
-        error?.message ||
-        "Unknown error",
+    return res
+      .status(500)
+      .json({
+        error:
+          "Gagal mengambil data Crew",
 
-      ...(process.env.NODE_ENV !==
-        "production" && {
-        stack: error?.stack,
-      }),
-    });
+        message:
+          error?.message ||
+          "Unknown error",
+
+        ...(process.env.NODE_ENV !==
+          "production" && {
+          stack:
+            error?.stack,
+        }),
+      });
   }
 }
