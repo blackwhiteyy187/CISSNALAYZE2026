@@ -683,3 +683,593 @@ select:focus-visible {
     padding: 12px 14px 12px 16px;
   }
 }
+
+/* Panel sangat sempit — sidebar/dialog Google Sheets (~300-400px) */
+@media (max-width: 400px) {
+  .topbar {
+    padding: 10px 12px;
+  }
+
+  .topbar-title {
+    gap: 8px;
+  }
+
+  .topbar-logo,
+  .topbar-mark {
+    height: 30px;
+    width: 30px;
+    border-radius: 8px;
+  }
+
+  .topbar-brand {
+    font-size: 14px;
+    letter-spacing: 0.01em;
+  }
+
+  .topbar-meta {
+    gap: 8px;
+  }
+
+  .btn-ghost {
+    padding: 6px 10px;
+  }
+
+  .btn-ghost-icon {
+    font-size: 12px;
+  }
+
+  .content {
+    padding: 14px 12px 32px;
+  }
+
+  .hero {
+    margin-bottom: 16px;
+  }
+
+  .hero-number {
+    font-size: 28px;
+  }
+
+  .hero-label {
+    font-size: 12px;
+    margin-top: 4px;
+  }
+
+  .hero-month {
+    font-size: 10.5px;
+    padding: 3px 10px;
+    margin-top: 6px;
+  }
+
+  .filters {
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+
+  .input,
+  .select {
+    padding: 8px 12px;
+    font-size: 12.5px;
+    border-radius: 10px;
+  }
+
+  .filter-row {
+    gap: 8px;
+  }
+
+  .select {
+    min-width: 0;
+  }
+
+  .list {
+    gap: 10px;
+  }
+
+  .conflict-card {
+    padding: 10px 12px 10px 13px;
+    border-radius: 10px;
+  }
+
+  .conflict-card::before {
+    width: 3px;
+  }
+
+  .conflict-head {
+    gap: 8px;
+    padding-bottom: 8px;
+    margin-bottom: 8px;
+  }
+
+  .avatar {
+    width: 26px;
+    height: 26px;
+    font-size: 10px;
+  }
+
+  .conflict-name {
+    font-size: 12px;
+  }
+
+  .conflict-cabang {
+    font-size: 10px;
+  }
+
+  .conflict-count {
+    font-size: 9.5px;
+    padding: 2px 7px;
+  }
+
+  .slot-row {
+    padding: 6px 0;
+  }
+
+  .slot-date {
+    font-size: 10.5px;
+  }
+
+  .chip {
+    font-size: 9px;
+    padding: 1px 7px;
+  }
+
+  .slot-role {
+    font-size: 11px;
+  }
+
+  .synced-at {
+    display: none;
+  }
+
+  .btn-ghost-label {
+    display: none;
+  }
+}
+
+/* ==========================================================================
+   FilterView — halaman availability per cabang (Legacy/NextGen)
+   ========================================================================== */
+
+.filterview-wrap {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 16px 48px;
+}
+
+.filterview-summary {
+  padding: 28px 0 20px;
+  text-align: center;
+}
+
+.filterview-number {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 44px;
+  line-height: 1;
+  background: var(--gradient-brand);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.filterview-numlabel {
+  color: var(--ink-soft);
+  margin-top: 6px;
+  font-size: 14px;
+}
+
+.filterview-badges {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.filterview-badge-month {
+  background: var(--primary-soft);
+  color: var(--primary-dark);
+  padding: 4px 13px;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.filterview-badge-synced {
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.filterview-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 14px;
+  margin-bottom: 24px;
+}
+
+.filterview-input {
+  flex: 1 1 220px;
+}
+
+.filterview-select {
+  flex: 0 1 auto;
+  min-width: 150px;
+}
+
+.filterview-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13.5px;
+  color: var(--ink-soft);
+  margin-left: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.filterview-checkbox-label input[type="checkbox"] {
+  accent-color: var(--primary);
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+}
+
+.filterview-branch-list {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.filterview-branch-card {
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  box-shadow: var(--shadow-card);
+}
+
+.filterview-branch-header {
+  padding: 12px 16px;
+  color: #fff;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.filterview-branch-name {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 15px;
+}
+
+.filterview-branch-count {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  opacity: 0.92;
+}
+
+.filterview-table-wrap {
+  overflow-x: auto;
+}
+
+.filterview-mobile-only {
+  display: none;
+}
+
+.filterview-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+}
+
+.filterview-th {
+  text-align: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+  background: var(--paper);
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.filterview-th-name {
+  text-align: left;
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--paper-raised);
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-soft);
+}
+
+.filterview-th-source {
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.filterview-th-legacy {
+  background: var(--primary-soft);
+  color: var(--primary-dark);
+}
+
+.filterview-th-nextgen {
+  background: var(--secondary-soft);
+  color: var(--secondary);
+}
+
+.filterview-th-spacer,
+.filterview-td-spacer {
+  width: 20px;
+  min-width: 20px;
+  max-width: 20px;
+  padding: 0;
+  border: none;
+  background: var(--paper);
+}
+
+.filterview-row {
+  background: var(--paper-raised);
+}
+
+.filterview-row-alt {
+  background: var(--paper);
+}
+
+.filterview-td {
+  text-align: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line-soft);
+  white-space: nowrap;
+}
+
+.filterview-td-name {
+  text-align: left;
+  font-weight: 500;
+  position: sticky;
+  left: 0;
+  background: inherit;
+  display: flex;
+  align-items: center;
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.filterview-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  color: #fff;
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 700;
+  margin-right: 8px;
+  flex-shrink: 0;
+}
+
+.filterview-unavail {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: var(--tertiary-soft);
+  color: var(--tertiary-dark);
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.filterview-other {
+  color: #b45309;
+  font-weight: 600;
+  font-size: 12.5px;
+}
+
+/* ==========================================================================
+   FilterView — panel sempit (Google Sheets)
+   ========================================================================== */
+
+@media (max-width: 400px) {
+  .filterview-wrap {
+    padding: 0 10px 32px;
+  }
+
+  .filterview-summary {
+    padding: 16px 0 12px;
+  }
+
+  .filterview-number {
+    font-size: 26px;
+  }
+
+  .filterview-numlabel {
+    font-size: 11.5px;
+    margin-top: 3px;
+  }
+
+  .filterview-badges {
+    gap: 6px;
+    margin-top: 8px;
+  }
+
+  .filterview-badge-month,
+  .filterview-badge-synced {
+    font-size: 10px;
+  }
+
+  .filterview-badge-month {
+    padding: 3px 10px;
+  }
+
+  .filterview-bar {
+    padding: 10px;
+    gap: 8px;
+    margin-bottom: 14px;
+    border-radius: 10px;
+  }
+
+  .filterview-input,
+  .filterview-select {
+    padding: 8px 11px;
+    font-size: 12.5px;
+    border-radius: 9px;
+    flex: 1 1 100%;
+  }
+
+  .filterview-checkbox-label {
+    font-size: 11.5px;
+    margin-left: 0;
+  }
+
+  .filterview-branch-list {
+    gap: 14px;
+  }
+
+  .filterview-branch-card {
+    border-radius: 10px;
+  }
+
+  .filterview-branch-header {
+    padding: 9px 12px;
+  }
+
+  .filterview-branch-name {
+    font-size: 12.5px;
+  }
+
+  .filterview-branch-count {
+    font-size: 10.5px;
+  }
+
+  .filterview-table {
+    font-size: 11px;
+  }
+
+  .filterview-th {
+    padding: 6px 8px;
+    font-size: 9.5px;
+  }
+
+  .filterview-th-source {
+    font-size: 10px;
+  }
+
+  .filterview-td {
+    padding: 6px 8px;
+  }
+
+  .filterview-td-name {
+    font-size: 11px;
+  }
+
+  .filterview-avatar {
+    width: 20px;
+    height: 20px;
+    font-size: 9px;
+    margin-right: 6px;
+  }
+
+  .filterview-unavail {
+    width: 18px;
+    height: 18px;
+    font-size: 10px;
+    border-radius: 5px;
+  }
+
+  .filterview-other {
+    font-size: 10.5px;
+  }
+
+  .filterview-th-spacer,
+  .filterview-td-spacer {
+    width: 10px;
+    min-width: 10px;
+    max-width: 10px;
+  }
+}
+
+/* ==========================================================================
+   FilterView — mode list (tanpa tabel) untuk panel sangat sempit
+   ========================================================================== */
+
+.filterview-mrow {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.filterview-mrow:last-child {
+  border-bottom: none;
+}
+
+.filterview-mrow-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.filterview-mrow-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.filterview-mrow-empty {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--ink-faint);
+  padding-left: 28px;
+}
+
+.filterview-mrow-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-left: 28px;
+}
+
+.filterview-mchip {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.filterview-mchip-unavail {
+  background: var(--tertiary-soft);
+  color: var(--tertiary-dark);
+}
+
+.filterview-mchip-other {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+/* Aktifkan mode list & sembunyikan tabel khusus panel sempit */
+@media (max-width: 400px) {
+  .filterview-summary {
+    padding: 22px 0 12px;
+  }
+
+  .filterview-desktop-only {
+    display: none;
+  }
+
+  .filterview-mobile-only {
+    display: block;
+  }
+}
