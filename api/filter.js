@@ -1,4 +1,4 @@
-// pages/api/filter.js
+// api/filter.js
 
 import { google } from "googleapis";
 
@@ -102,7 +102,7 @@ function normalizePersonName(value) {
 
   // assignment bracket di depan nama
   name = name.replace(
-    /^\[[^\]]+\]\s*/u,
+    /^\[[^\]]+\]\s*/,
     ""
   );
 
@@ -218,9 +218,11 @@ function dateKeyFromDate(date) {
   if (!date) return "";
 
   const year = date.getUTCFullYear();
+
   const month = String(
     date.getUTCMonth() + 1
   ).padStart(2, "0");
+
   const day = String(
     date.getUTCDate()
   ).padStart(2, "0");
@@ -236,7 +238,8 @@ function detectDateSource(dateColumn) {
   const day = date.getUTCDay();
 
   // Saturday = Legacy
-  // Sunday   = NextGen
+  // Sunday = NextGen
+
   if (day === 6) return "Legacy";
   if (day === 0) return "NextGen";
 
@@ -246,15 +249,6 @@ function detectDateSource(dateColumn) {
 /* =========================================================
    GOOGLE SHEET READER
 ========================================================= */
-
-/*
-  IMPORTANT:
-  spreadsheetId sekarang dikirim dari month.sheetId.
-
-  Ini adalah fix utama bug:
-  month=2026-10 tidak boleh tetap membaca
-  spreadsheet utama yang berisi data April.
-*/
 
 async function readSheet(spreadsheetId, tabName) {
   const auth = getGoogleAuth();
@@ -279,8 +273,9 @@ async function readSheet(spreadsheetId, tabName) {
 ========================================================= */
 
 function findHeaderIndex(headers, candidates) {
-  const normalizedHeaders = headers.map((header) =>
-    normalizeText(header).toLowerCase()
+  const normalizedHeaders = headers.map(
+    (header) =>
+      normalizeText(header).toLowerCase()
   );
 
   for (const candidate of candidates) {
@@ -335,13 +330,14 @@ function parseAssignment(value) {
   }
 
   const brackets = [];
-
   const regex = /\[([^\]]+)\]/g;
 
   let match;
 
   while ((match = regex.exec(text))) {
-    brackets.push(normalizeText(match[1]));
+    brackets.push(
+      normalizeText(match[1])
+    );
   }
 
   let source = "";
@@ -358,9 +354,7 @@ function parseAssignment(value) {
       continue;
     }
 
-    if (
-      /^ng(?:\s|$)/i.test(bracket)
-    ) {
+    if (/^ng(?:\s|$)/i.test(bracket)) {
       source = "NextGen";
 
       const ngBranch = bracket
@@ -368,7 +362,9 @@ function parseAssignment(value) {
         .trim();
 
       if (ngBranch) {
-        branch = normalizeBranch(ngBranch);
+        branch = normalizeBranch(
+          ngBranch
+        );
       }
 
       continue;
@@ -403,16 +399,19 @@ function parseAssignment(value) {
   }
 
   if (!source) {
-    if (/^\[Legacy\]/i.test(text)) {
+    if (
+      /^\[Legacy\]/i.test(text)
+    ) {
       source = "Legacy";
-    } else if (/^\[NG\b/i.test(text)) {
+    } else if (
+      /^\[NG\b/i.test(text)
+    ) {
       source = "NextGen";
     }
   }
 
   /*
-    Bu bagian mengikuti format assignment:
-
+    Format:
     [NG Aruna 2] [Prophetic] Music - Singer
 
     => source   NextGen
@@ -438,10 +437,6 @@ function parseAssignment(value) {
     .split(/\s+/)
     .filter(Boolean);
 
-  /*
-    Kalau ada pola:
-    Music - Singer
-  */
   const dashMatch = remaining.match(
     /^(.+?)\s+-\s+(.+?)$/i
   );
@@ -450,6 +445,7 @@ function parseAssignment(value) {
     const left = normalizeText(
       dashMatch[1]
     );
+
     const right = normalizeText(
       dashMatch[2]
     );
@@ -460,6 +456,7 @@ function parseAssignment(value) {
 
     if (leftParts.length >= 2) {
       field = leftParts[0];
+
       category = leftParts
         .slice(1)
         .join(" ");
@@ -471,7 +468,9 @@ function parseAssignment(value) {
   } else {
     if (parts.length >= 3) {
       category = parts[0];
+
       field = parts[1];
+
       role = parts
         .slice(2)
         .join(" ");
@@ -562,6 +561,12 @@ function parseAvailability(value) {
   };
 }
 
+/*
+  Hanya nilai affirmative yang dianggap izin.
+
+  IMPORTANT:
+  "No" tidak boleh dianggap leave.
+*/
 function isLeaveValue(value) {
   const text = normalizeText(value)
     .toLowerCase();
@@ -574,7 +579,6 @@ function isLeaveValue(value) {
     "izin",
     "leave",
     "true",
-    "1",
   ].includes(text);
 }
 
@@ -709,6 +713,36 @@ function findScheduleMatch(
 }
 
 /* =========================================================
+   NORMALIZE AVAILABILITY OBJECT
+========================================================= */
+
+function normalizeAvailabilityItem(item) {
+  const status =
+    item?.status || "other";
+
+  return {
+    ...item,
+
+    status,
+
+    isLeave:
+      status === "leave",
+
+    isUnavailable:
+      status === "unavailable" ||
+      status === "leave",
+
+    isAvailable:
+      status === "available",
+
+    leaveInfo:
+      status === "leave"
+        ? item?.leaveInfo || null
+        : null,
+  };
+}
+
+/* =========================================================
    AVAILABILITY MERGE
 ========================================================= */
 
@@ -717,44 +751,87 @@ function mergeAvailability(
   incoming
 ) {
   if (!current) {
-    return {
-      ...incoming,
-    };
+    return normalizeAvailabilityItem(
+      incoming
+    );
   }
+
+  const currentItem =
+    normalizeAvailabilityItem(
+      current
+    );
+
+  const incomingItem =
+    normalizeAvailabilityItem(
+      incoming
+    );
 
   const currentPriority =
     STATUS_PRIORITY[
-      current.status
+      currentItem.status
     ] ??
     STATUS_PRIORITY.other;
 
   const incomingPriority =
     STATUS_PRIORITY[
-      incoming.status
+      incomingItem.status
     ] ??
     STATUS_PRIORITY.other;
+
+  /*
+    Higher priority wins:
+
+    leave
+    > unavailable
+    > scheduled
+    > other
+    > available
+  */
+
+  let winner;
 
   if (
     incomingPriority >
     currentPriority
   ) {
-    return {
-      ...current,
-      ...incoming,
+    winner = {
+      ...currentItem,
+      ...incomingItem,
+    };
+  } else if (
+    incomingPriority <
+    currentPriority
+  ) {
+    winner = {
+      ...incomingItem,
+      ...currentItem,
+    };
+  } else {
+    /*
+      Same priority:
+      pertahankan data current,
+      tetapi jangan sampai flag status
+      menjadi tidak konsisten.
+    */
+    winner = {
+      ...currentItem,
+      ...incomingItem,
+      status: currentItem.status,
     };
   }
 
   /*
-    Kalau priority sama, pertahankan data
-    yang sudah ada tetapi gabungkan info.
-  */
+    STATUS adalah sumber kebenaran utama.
+    Jadi tidak mungkin lagi terjadi:
 
-  return {
-    ...current,
-    ...incoming,
-    status:
-      current.status,
-  };
+    status: "available"
+    isLeave: true
+
+    atau kombinasi flag lain yang kontradiktif.
+  */
+  return normalizeAvailabilityItem(
+    winner
+  );
 }
 
 /* =========================================================
@@ -850,7 +927,10 @@ function parseFilterSheet(
     let branch =
       assignment.branch;
 
-    if (!branch && cabangIndex >= 0) {
+    if (
+      !branch &&
+      cabangIndex >= 0
+    ) {
       branch = canonicalBranch(
         row[cabangIndex]
       );
@@ -893,26 +973,31 @@ function parseFilterSheet(
         parseAvailability(raw);
 
       /*
-        X + isiIzin = leave
-        tetapi hanya untuk tanggal X tersebut.
+        X + isiIzin affirmative = leave.
 
-        Ini penting:
-        jangan membuat seluruh bulan menjadi leave.
+        IMPORTANT:
+        Leave hanya berlaku pada tanggal
+        yang cell-nya memang X.
+
+        Jadi tidak membuat seluruh bulan
+        menjadi leave.
       */
 
       const isLeave =
         hasPermissionFlag &&
-        parsed.status ===
-          "unavailable";
+        parsed.status === "unavailable";
 
       availability[
         dateColumn.dateKey
       ] = {
         date: dateColumn.header,
+
         dateKey:
           dateColumn.dateKey,
+
         source:
           dateColumn.source,
+
         raw: clean(raw),
 
         status: isLeave
@@ -924,6 +1009,7 @@ function parseFilterSheet(
           !isLeave,
 
         isUnavailable:
+          isLeave ||
           parsed.isUnavailable,
 
         isLeave,
@@ -944,21 +1030,31 @@ function parseFilterSheet(
     people.push({
       name,
       branch,
+
       source:
         assignment.source,
+
       category:
         assignment.category,
+
       field:
         assignment.field,
+
       role:
         assignment.role,
+
       assignment:
         assignment.raw,
+
       tab:
         tabName,
+
       rowIndex,
+
       isiIzin,
+
       alasanIzin,
+
       availability,
     });
   }
@@ -1013,6 +1109,7 @@ function parseScheduleSheet(
 
   /*
     Schedule sering memakai merged cells.
+
     Jadi Cabang/Posisi perlu carry-forward.
   */
 
@@ -1077,12 +1174,6 @@ function parseScheduleSheet(
         continue;
       }
 
-      /*
-        Nama biasanya berada di kolom tertentu,
-        tetapi beberapa schedule menggunakan
-        assignment/name dari row.
-      */
-
       let name =
         nameIndex >= 0
           ? normalizePersonName(
@@ -1097,24 +1188,35 @@ function parseScheduleSheet(
       entries.push({
         name,
         branch,
+
         source:
           dateColumn.source ||
           assignment.source ||
           "",
+
         date:
           dateColumn.header,
+
         dateKey:
           dateColumn.dateKey,
+
         raw:
           clean(value),
+
         position,
+
         category:
           assignment.category,
+
         field:
           assignment.field,
+
         role:
           assignment.role,
-        tab: tabName,
+
+        tab:
+          tabName,
+
         rowIndex,
       });
     }
@@ -1186,8 +1288,10 @@ function combinePeople(
             {
               name:
                 person.name,
+
               branch:
                 person.branch,
+
               dateKey,
             }
           );
@@ -1197,6 +1301,7 @@ function combinePeople(
 
         /*
           Priority:
+
           leave
           > unavailable
           > scheduled
@@ -1226,6 +1331,7 @@ function combinePeople(
 
         const merged = {
           ...incoming,
+
           status,
 
           scheduled:
@@ -1236,12 +1342,16 @@ function combinePeople(
               ? {
                   source:
                     scheduled.source,
+
                   raw:
                     scheduled.raw,
+
                   position:
                     scheduled.position,
+
                   date:
                     scheduled.date,
+
                   dateKey:
                     scheduled.dateKey,
                 }
@@ -1273,10 +1383,13 @@ async function loadFilterData(
   month
 ) {
   /*
-    ========================================================
     FIX UTAMA:
+
     spreadsheet sumber = month.sheetId
-    ========================================================
+
+    Jadi:
+    2026-10 -> spreadsheet Oktober
+    2026-09 -> spreadsheet September
   */
 
   const sourceSpreadsheetId =
@@ -1354,7 +1467,9 @@ async function loadFilterData(
     );
 
   /*
-    Semua tanggal yang tersedia dari Filter.
+    Semua tanggal yang tersedia
+    dari Filter.
+
     Deduplicate berdasarkan dateKey.
   */
 
@@ -1386,8 +1501,11 @@ async function loadFilterData(
       b.date.getTime()
   );
 
-  const scheduledPeople = new Set();
-  const leavePeople = new Set();
+  const scheduledPeople =
+    new Set();
+
+  const leavePeople =
+    new Set();
 
   for (const person of people) {
     for (const item of Object.values(
@@ -1476,9 +1594,13 @@ export default async function handler(
     }
 
     /*
-      Cache sekarang ikut month + spreadsheet ID.
-      Jadi Oktober dan September tidak mungkin
-      menggunakan cache data yang salah.
+      Cache ikut:
+
+      month + spreadsheet ID
+
+      Jadi Oktober dan September
+      tidak mungkin menggunakan
+      cache data yang salah.
     */
 
     const sourceSpreadsheetId =
@@ -1515,7 +1637,9 @@ export default async function handler(
 
       month: {
         id: month.id,
+
         label: month.label,
+
         sheetId:
           month.sheetId,
       },
@@ -1523,7 +1647,10 @@ export default async function handler(
       availableMonths:
         MONTHS.map((item) => ({
           id: item.id,
-          label: item.label,
+
+          label:
+            item.label,
+
           sheetId:
             item.sheetId,
         })),
@@ -1551,8 +1678,10 @@ export default async function handler(
           (item) => ({
             date:
               item.header,
+
             dateKey:
               item.dateKey,
+
             source:
               item.source,
           })
@@ -1596,6 +1725,7 @@ export default async function handler(
     return res.status(500).json({
       error:
         "Gagal mengambil data filter.",
+
       detail:
         error?.message ||
         String(error),
