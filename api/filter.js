@@ -1,1566 +1,1604 @@
+// pages/api/filter.js
+
 import { google } from "googleapis";
 
-/*
- * ============================================================
- * CISS ANALYZE — FILTER API
- * ============================================================
- *
- * Sumber:
- * - [LGY] Filter
- * - [NG] Filter
- *
- * Fungsi:
- * 1. Membaca availability per tanggal.
- * 2. Membawa semua informasi role seseorang.
- * 3. Tidak membuang orang yang sedang izin / unavailable.
- * 4. Membawa semua priority.
- * 5. Menentukan branch dari KeyName.
- * 6. Menyimpan source Legacy / NextGen.
- *
- * API ini BELUM melakukan AI analysis.
- * AI analysis akan dilakukan di api/analyze.js.
- */
+/* =========================================================
+   CONFIG
+========================================================= */
 
-// ============================================================
-// DATE
-// ============================================================
-
-/*
- * Filter sheet biasanya mempunyai header seperti:
- *
- * Sat 03 Oct
- * Sun 04 Oct
- * Sat, 03 Oct
- *
- * Bisa juga terdapat tahun:
- *
- * Sat 03 Oct 2026
- */
-const FILTER_DATE_HEADER_REGEX =
-  /^[A-Za-z]{3},?\s*\d{1,2}\s+[A-Za-z]{3}(?:\s+\d{4})?$/i;
-
-
-// ============================================================
-// FILTER TABS
-// ============================================================
-
-const ALLOWED_TABS = [
-  "[LGY] Filter",
-  "[NG] Filter",
-];
-
-
-// ============================================================
-// BRANCH
-// ============================================================
-
-const BRANCH_CODE_MAP = [
-  { code: "LGY", label: "Legacy" },
-  { code: "N2AR", label: "Aruna 2" },
-  { code: "N5AR", label: "Aruna 5" },
-  { code: "N4SH", label: "Soekhat 4" },
-  { code: "NBS", label: "Barsi" },
-  { code: "NRG", label: "Regency" },
-  { code: "VOL", label: "Volunteer" },
-];
-
-/*
- * Contoh:
- *
- * Albert Saputra - N2AR2401013
- * Christine Evangeline Patricia - LGY2312002
- *
- * → mengambil kode branch dari belakang KeyName.
- */
-const CODE_TAIL_REGEX =
-  /[-\u2013]\s*([A-Za-z]+)\d+\s*$/;
-
-
-// ============================================================
-// MONTHS
-// ============================================================
+const SPREADSHEET_ID =
+  process.env.GOOGLE_SPREADSHEET_ID ||
+  process.env.SPREADSHEET_ID ||
+  "1tMkfZrlH2UdhiQscr3t0E8olbOT08-n1oDsNiQQomIg";
 
 const MONTHS = [
   {
     id: "2026-10",
     label: "Oktober 2026",
-    sheetId: "1CQna5UBOM8ss5WDop3V1_6JDhUfrc7YS5QF3ygI_HKc",
+    sheetId:
+      "1CQna5UBOM8ss5WDop3V1_6JDhUfrc7YS5QF3ygI_HKc",
   },
   {
     id: "2026-09",
     label: "September 2026",
-    sheetId: "1jaQuTv0-d4rW2-NzmB-eNk-GBv_Ag_zv_Dg1KOe0IhQ",
+    sheetId:
+      "1jaQuTv0-d4rW2-NzmB-eNk-GBv_Ag_zv_Dg1KOe0IhQ",
   },
 ];
 
-
-// ============================================================
-// CACHE
-// ============================================================
-
-const CACHE_TTL_MS = 4 * 60 * 1000;
-
-const filterCache = new Map();
-
-function getCached(monthId) {
-  const entry = filterCache.get(monthId);
-
-  if (!entry) return null;
-
-  const isExpired =
-    Date.now() - entry.timestamp > CACHE_TTL_MS;
-
-  return isExpired ? null : entry.payload;
-}
-
-function setCached(monthId, payload) {
-  filterCache.set(monthId, {
-    timestamp: Date.now(),
-    payload,
-  });
-}
-
-
-// ============================================================
-// GOOGLE AUTH
-// ============================================================
-
-function getAuth() {
-  const email =
-    process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-
-  const key =
-    (process.env.GOOGLE_PRIVATE_KEY || "")
-      .replace(/\\n/g, "\n");
-
-  if (!email || !key) {
-    throw new Error(
-      "GOOGLE_SERVICE_ACCOUNT_EMAIL / GOOGLE_PRIVATE_KEY belum di-set di Environment Variables."
-    );
-  }
-
-  return new google.auth.JWT(
-    email,
-    null,
-    key,
-    [
-      "https://www.googleapis.com/auth/spreadsheets.readonly",
-    ]
-  );
-}
-
-
-// ============================================================
-// HELPERS
-// ============================================================
-
-function isFilterTab(tabName) {
-  return ALLOWED_TABS.includes(
-    String(tabName || "").trim()
-  );
-}
-
-
-/*
- * Ambil branch dari KeyName.
- */
-function detectBranch(keyName) {
-  if (
-    !keyName ||
-    typeof keyName !== "string"
-  ) {
-    return {
-      code: null,
-      label: "Lainnya",
-    };
-  }
-
-  const match =
-    keyName
-      .trim()
-      .match(CODE_TAIL_REGEX);
-
-  if (!match) {
-    return {
-      code: null,
-      label: "Lainnya",
-    };
-  }
-
-  const rawCode =
-    match[1].toUpperCase();
-
-  const found =
-    BRANCH_CODE_MAP.find((branch) =>
-      rawCode.startsWith(branch.code)
-    );
-
-  if (found) {
-    return {
-      code: found.code,
-      label: found.label,
-    };
-  }
-
-  return {
-    code: rawCode,
-    label: rawCode,
-  };
-}
-
-
-/*
- * Normalisasi text.
- */
-function normalizeText(value) {
-  return String(value ?? "")
-    .trim()
-    .replace(/\s+/g, " ");
-}
-
-
-/*
- * Normalisasi priority.
- *
- * Contoh:
- * "1"          → 1
- * "Priority 1" → 1
- * "P1"         → 1
- * ""           → null
- *
- * Kalau tidak bisa dipastikan sebagai angka,
- * raw value tetap disimpan.
- */
-function normalizePriority(value) {
-  const raw = normalizeText(value);
-
-  if (!raw) {
-    return {
-      value: null,
-      raw: "",
-    };
-  }
-
-  const match =
-    raw.match(/\d+/);
-
-  if (match) {
-    return {
-      value: Number(match[0]),
-      raw,
-    };
-  }
-
-  return {
-    value: null,
-    raw,
-  };
-}
-
-
-/*
- * Menentukan availability dari cell tanggal.
- *
- * "" / 0 → available
- * X      → unavailable
- * lainnya → other
- */
-function parseAvailability(rawValue) {
-  const raw =
-    normalizeText(rawValue);
-
-  if (
-    raw.toUpperCase() === "X"
-  ) {
-    return "unavailable";
-  }
-
-  if (
-    raw === "" ||
-    raw === "0"
-  ) {
-    return "available";
-  }
-
-  return "other";
-}
-
-
-/*
- * Tentukan source berdasarkan tab.
- */
-function detectSource(tabName) {
-  const normalized =
-    normalizeText(tabName)
-      .toUpperCase();
-
-  if (
-    normalized === "[LGY] FILTER"
-  ) {
-    return "Legacy";
-  }
-
-  if (
-    normalized === "[NG] FILTER"
-  ) {
-    return "NextGen";
-  }
-
-  return null;
-}
-
-
-// ============================================================
-// DATE PARSER
-// ============================================================
-
-const MONTH_MAP = {
-  jan: 0,
-  feb: 1,
-  mar: 2,
-  apr: 3,
-  may: 4,
-  jun: 5,
-  jul: 6,
-  aug: 7,
-  sep: 8,
-  oct: 9,
-  nov: 10,
-  dec: 11,
-};
-
-
-/*
- * Mengubah:
- *
- * Sat 03 Oct
- * Sat, 03 Oct
- * Sat 03 Oct 2026
- *
- * menjadi:
- *
- * YYYY-MM-DD
- *
- * Kalau tahun tidak ada,
- * tahun diambil dari month.id.
- */
-function normalizeDate(
-  label,
-  monthId
-) {
-  const text =
-    normalizeText(label);
-
-  if (!text) return null;
-
-  const match =
-    text.match(
-      /^[A-Za-z]{3},?\s*(\d{1,2})\s+([A-Za-z]{3})(?:\s+(\d{4}))?/i
-    );
-
-  if (!match) {
-    return null;
-  }
-
-  const day =
-    Number(match[1]);
-
-  const monthName =
-    match[2].toLowerCase();
-
-  const monthIndex =
-    MONTH_MAP[monthName];
-
-  if (
-    monthIndex === undefined ||
-    !day
-  ) {
-    return null;
-  }
-
-  let year;
-
-  if (match[3]) {
-    year = Number(match[3]);
-  } else if (
-    monthId &&
-    /^\d{4}-\d{2}$/.test(monthId)
-  ) {
-    year =
-      Number(monthId.slice(0, 4));
-  } else {
-    year =
-      new Date().getFullYear();
-  }
-
-  const date =
-    new Date(
-      Date.UTC(
-        year,
-        monthIndex,
-        day
-      )
-    );
-
-  return date
-    .toISOString()
-    .slice(0, 10);
-}
-
-
-/*
- * Menentukan Legacy / NextGen
- * dari weekday tanggal.
- *
- * Sabtu  → Legacy
- * Minggu → NextGen
- */
-function detectDateSource(
-  dateKey
-) {
-  if (!dateKey) return null;
-
-  const date =
-    new Date(
-      `${dateKey}T00:00:00Z`
-    );
-
-  const day =
-    date.getUTCDay();
-
-  if (day === 6) {
-    return "Legacy";
-  }
-
-  if (day === 0) {
-    return "NextGen";
-  }
-
-  return null;
-}
-
-
-// ============================================================
-// HEADER
-// ============================================================
-
-function findDateColumns(
-  headerRow,
-  monthId
-) {
-  const cols = [];
-
-  (
-    headerRow || []
-  ).forEach(
-    (cell, idx) => {
-      if (
-        typeof cell !== "string"
-      ) {
-        return;
-      }
-
-      const label =
-        cell.trim();
-
-      if (
-        !FILTER_DATE_HEADER_REGEX.test(
-          label
-        )
-      ) {
-        return;
-      }
-
-      const dateKey =
-        normalizeDate(
-          label,
-          monthId
-        );
-
-      if (!dateKey) {
-        return;
-      }
-
-      const source =
-        detectDateSource(
-          dateKey
-        );
-
-      cols.push({
-        colIndex: idx,
-        label,
-        dateKey,
-        source,
-      });
-    }
-  );
-
-  return cols;
-}
-
-
-function findHeaderRowIndex(
-  rows,
-  monthId
-) {
-  for (
-    let r = 0;
-    r < Math.min(
-      rows.length,
-      10
-    );
-    r++
-  ) {
-    if (
-      findDateColumns(
-        rows[r],
-        monthId
-      ).length > 0
-    ) {
-      return r;
-    }
-  }
-
-  return -1;
-}
-
-
-// ============================================================
-// LABEL COLUMNS
-// ============================================================
-
-function findLabelColumns(
-  headerRow
-) {
-  const find = (
-    needle
-  ) =>
-    (
-      headerRow || []
-    ).findIndex(
-      (cell) =>
-        typeof cell === "string" &&
-        cell
-          .toLowerCase()
-          .includes(needle)
-    );
-
-  return {
-    keyNameCol:
-      find("keyname"),
-
-    subdivisiCol:
-      find("subdivisi"),
-
-    priorityCol:
-      find("priori"),
-
-    statusCol:
-      find("status"),
-
-    isiIzinCol:
-      (
-        headerRow || []
-      ).findIndex(
-        (cell) =>
-          typeof cell === "string" &&
-          cell
-            .toLowerCase()
-            .trim() ===
-            "isi izin"
-      ),
-
-    alasanCol:
-      find("alasan"),
-
-    crewNotesCol:
-      find("crew"),
-
-    legacyCol:
-      find("legacy"),
-  };
-}
-
-
-// ============================================================
-// EXTRACT ROLE ROWS
-// ============================================================
-
-/*
- * 1 baris Filter =
- * 1 role seseorang.
- *
- * Kita TIDAK membuang:
- *
- * - Priority rendah
- * - orang izin
- * - orang unavailable
- * - status lain
- */
-function extractRoleRowsFromSheet(
-  rows,
-  monthId,
-  source
-) {
-  const headerIdx =
-    findHeaderRowIndex(
-      rows,
-      monthId
-    );
-
-  if (
-    headerIdx === -1
-  ) {
-    return [];
-  }
-
-  const headerRow =
-    rows[headerIdx];
-
-  const dateCols =
-    findDateColumns(
-      headerRow,
-      monthId
-    );
-
-  const cols =
-    findLabelColumns(
-      headerRow
-    );
-
-  const roleRows = [];
-
-  for (
-    let r = headerIdx + 1;
-    r < rows.length;
-    r++
-  ) {
-    const row =
-      rows[r] || [];
-
-    const keyName =
-      cols.keyNameCol >= 0
-        ? normalizeText(
-            row[
-              cols.keyNameCol
-            ]
-          )
-        : "";
-
-    if (!keyName) {
-      continue;
-    }
-
-    const branch =
-      detectBranch(
-        keyName
-      );
-
-    const priority =
-      normalizePriority(
-        cols.priorityCol >= 0
-          ? row[
-              cols.priorityCol
-            ]
-          : ""
-      );
-
-    const subdivisi =
-      cols.subdivisiCol >= 0
-        ? normalizeText(
-            row[
-              cols.subdivisiCol
-            ]
-          )
-        : "";
-
-    const status =
-      cols.statusCol >= 0
-        ? normalizeText(
-            row[
-              cols.statusCol
-            ]
-          )
-        : "";
-
-    const isiIzin =
-      cols.isiIzinCol >= 0
-        ? normalizeText(
-            row[
-              cols.isiIzinCol
-            ]
-          )
-        : "";
-
-    const alasanIzin =
-      cols.alasanCol >= 0
-        ? normalizeText(
-            row[
-              cols.alasanCol
-            ]
-          )
-        : "";
-
-    const crewNotes =
-      cols.crewNotesCol >= 0
-        ? normalizeText(
-            row[
-              cols.crewNotesCol
-            ]
-          )
-        : "";
-
-    const pelayananLegacy =
-      cols.legacyCol >= 0
-        ? normalizeText(
-            row[
-              cols.legacyCol
-            ]
-          )
-        : "";
-
-
-    /*
-     * Availability per tanggal.
-     */
-    const availability =
-      dateCols.map(
-        ({
-          colIndex,
-          label,
-          dateKey,
-          source: dateSource,
-        }) => {
-          const raw =
-            row[colIndex] ??
-            "";
-
-          const availabilityStatus =
-            parseAvailability(
-              raw
-            );
-
-          /*
-           * Izin dianggap sebagai
-           * informasi tambahan.
-           *
-           * Jadi walaupun cell tidak
-           * bernilai X, kita tetap
-           * menyimpan informasi izin.
-           */
-          const hasLeave =
-            Boolean(
-              isiIzin ||
-              alasanIzin
-            );
-
-          return {
-            date: label,
-
-            dateKey,
-
-            source:
-              dateSource ||
-              source,
-
-            status:
-              availabilityStatus,
-
-            raw:
-
-              normalizeText(
-                raw
-              ),
-
-            isAvailable:
-              availabilityStatus ===
-              "available",
-
-            isUnavailable:
-              availabilityStatus ===
-              "unavailable",
-
-            isLeave:
-              hasLeave,
-
-            leaveInfo:
-              hasLeave
-                ? {
-                    isiIzin,
-                    alasanIzin,
-                  }
-                : null,
-          };
-        }
-      );
-
-
-    roleRows.push({
-      keyName,
-
-      name:
-        keyName,
-
-      branchCode:
-        branch.code,
-
-      branchLabel:
-        branch.label,
-
-      source,
-
-      /*
-       * Category saat ini mengikuti
-       * field Subdivisi.
-       *
-       * Nanti Crew API akan menjadi
-       * sumber category utama untuk
-       * AI analysis.
-       */
-      category:
-        subdivisi,
-
-      subdivisi,
-
-      /*
-       * SEMUA priority tetap dibawa.
-       */
-      priority:
-        priority.value,
-
-      priorityRaw:
-        priority.raw,
-
-      status,
-
-      isiIzin,
-
-      alasanIzin,
-
-      crewNotes,
-
-      pelayananLegacy,
-
-      availability,
-    });
-  }
-
-  return roleRows;
-}
-
-
-// ============================================================
-// GROUP PEOPLE
-// ============================================================
-
-/*
- * Kalau seseorang mempunyai beberapa
- * role/baris di Filter:
- *
- * Albert
- * ├── Music Priority 1
- * ├── Music Priority 2
- * └── Multimedia Priority 3
- *
- * semuanya tetap disimpan.
- */
-function groupByBranch(
-  roleRows
-) {
-  const people =
-    new Map();
-
-
-  roleRows.forEach(
-    (row) => {
-      /*
-       * Gunakan branch + name
-       * sebagai identity.
-       */
-      const personKey =
-        `${row.branchLabel}__${row.keyName}`;
-
-
-      if (
-        !people.has(
-          personKey
-        )
-      ) {
-        people.set(
-          personKey,
-          {
-            name:
-              row.name,
-
-            keyName:
-              row.keyName,
-
-            branchCode:
-              row.branchCode,
-
-            branchLabel:
-              row.branchLabel,
-
-            roles: [],
-
-            availabilityMap:
-              new Map(),
-
-            leaveMap:
-              new Map(),
-          }
-        );
-      }
-
-
-      const person =
-        people.get(
-          personKey
-        );
-
-
-      /*
-       * SEMUA role tetap masuk.
-       */
-      person.roles.push({
-        category:
-          row.category,
-
-        subdivisi:
-          row.subdivisi,
-
-        priority:
-          row.priority,
-
-        priorityRaw:
-          row.priorityRaw,
-
-        status:
-          row.status,
-
-        isiIzin:
-          row.isiIzin,
-
-        alasanIzin:
-          row.alasanIzin,
-
-        crewNotes:
-          row.crewNotes,
-
-        pelayananLegacy:
-          row.pelayananLegacy,
-
-        source:
-          row.source,
-      });
-
-
-      /*
-       * Gabungkan availability.
-       *
-       * Key:
-       * source + tanggal
-       */
-      row.availability.forEach(
-        (item) => {
-          const key =
-            `${item.source}__${item.dateKey}`;
-
-
-          const existing =
-            person.availabilityMap.get(
-              key
-            );
-
-
-          /*
-           * Priority status:
-           *
-           * unavailable
-           * > other
-           * > available
-           *
-           * Jadi kalau salah satu role
-           * menyatakan X, orang tersebut
-           * tetap dianggap unavailable
-           * pada tanggal tersebut.
-           */
-          const STATUS_PRIORITY = {
-            available: 0,
-            other: 1,
-            unavailable: 2,
-          };
-
-
-          if (
-            !existing ||
-            STATUS_PRIORITY[
-              item.status
-            ] >
-              STATUS_PRIORITY[
-                existing.status
-              ]
-          ) {
-            person.availabilityMap.set(
-              key,
-              {
-                ...item,
-              }
-            );
-          }
-
-
-          /*
-           * Simpan informasi izin
-           * secara terpisah.
-           *
-           * Ini penting supaya nanti
-           * AI bisa mengetahui:
-           *
-           * "orangnya tetap ada,
-           * tapi sedang izin."
-           */
-          if (
-            item.isLeave
-          ) {
-            person.leaveMap.set(
-              key,
-              {
-                isLeave: true,
-
-                isiIzin:
-                  item.leaveInfo
-                    ?.isiIzin ||
-                  "",
-
-                alasanIzin:
-                  item.leaveInfo
-                    ?.alasanIzin ||
-                  "",
-              }
-            );
-          }
-        }
-      );
-    }
-  );
-
-
-  const byBranch =
-    new Map();
-
-
-  people.forEach(
-    (person) => {
-      const availability =
-        Array.from(
-          person.availabilityMap.entries()
-        ).map(
-          ([key, value]) => {
-            const leave =
-              person.leaveMap.get(
-                key
-              );
-
-            return {
-              ...value,
-
-              isLeave:
-                Boolean(
-                  value.isLeave ||
-                  leave
-                ),
-
-              leaveInfo:
-                leave ||
-                value.leaveInfo ||
-                null,
-            };
-          }
-        );
-
-
-      /*
-       * Semua priority unik.
-       */
-      const priorities =
-        Array.from(
-          new Set(
-            person.roles
-              .map(
-                (role) =>
-                  role.priority
-              )
-              .filter(
-                (value) =>
-                  value !== null &&
-                  value !== undefined
-              )
-          )
-        ).sort(
-          (a, b) =>
-            Number(a) -
-            Number(b)
-        );
-
-
-      /*
-       * Semua category unik.
-       */
-      const categories =
-        Array.from(
-          new Set(
-            person.roles
-              .map(
-                (role) =>
-                  role.category
-              )
-              .filter(Boolean)
-          )
-        );
-
-
-      const finalPerson = {
-        name:
-          person.name,
-
-        keyName:
-          person.keyName,
-
-        branchCode:
-          person.branchCode,
-
-        branchLabel:
-          person.branchLabel,
-
-        /*
-         * SEMUA role.
-         */
-        roles:
-          person.roles,
-
-        /*
-         * Semua category.
-         */
-        categories,
-
-        /*
-         * Semua priority.
-         */
-        priorities,
-
-        /*
-         * Availability per tanggal.
-         */
-        availability,
-
-        /*
-         * Jumlah unavailable.
-         */
-        unavailableCount:
-          availability.filter(
-            (item) =>
-              item.status ===
-              "unavailable"
-          ).length,
-
-        /*
-         * Jumlah izin.
-         */
-        leaveCount:
-          availability.filter(
-            (item) =>
-              item.isLeave
-          ).length,
-      };
-
-
-      if (
-        !byBranch.has(
-          person.branchLabel
-        )
-      ) {
-        byBranch.set(
-          person.branchLabel,
-          []
-        );
-      }
-
-
-      byBranch
-        .get(
-          person.branchLabel
-        )
-        .push(
-          finalPerson
-        );
-    }
-  );
-
-
-  return Array.from(
-    byBranch.entries()
-  )
-    .map(
-      ([
-        branchLabel,
-        list,
-      ]) => ({
-        branchLabel,
-
-        people:
-          list.sort(
-            (a, b) =>
-              a.name.localeCompare(
-                b.name
-              )
-          ),
-      })
-    )
-    .sort(
-      (a, b) =>
-        a.branchLabel.localeCompare(
-          b.branchLabel
-        )
-    );
-}
-
-
-// ============================================================
-// ALLOWED BRANCHES
-// ============================================================
-
-const ALLOWED_BRANCH_LABELS = [
+const ALLOWED_BRANCHES = new Set([
   "Legacy",
   "Aruna 2",
   "Aruna 5",
   "Barsi",
   "Regency",
   "Soekhat 4",
-];
+]);
 
+const CACHE_TTL = 4 * 60 * 1000;
 
-// ============================================================
-// API HANDLER
-// ============================================================
+const STATUS_PRIORITY = {
+  available: 0,
+  other: 1,
+  scheduled: 2,
+  unavailable: 3,
+  leave: 4,
+};
+
+const cache = new Map();
+
+/* =========================================================
+   GOOGLE AUTH
+========================================================= */
+
+function getGoogleAuth() {
+  const clientEmail =
+    process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL ||
+    process.env.GOOGLE_CLIENT_EMAIL;
+
+  const privateKey = (
+    process.env.GOOGLE_PRIVATE_KEY || ""
+  ).replace(/\\n/g, "\n");
+
+  if (!clientEmail || !privateKey) {
+    throw new Error(
+      "Google credentials belum lengkap. Pastikan GOOGLE_SERVICE_ACCOUNT_EMAIL / GOOGLE_CLIENT_EMAIL dan GOOGLE_PRIVATE_KEY tersedia."
+    );
+  }
+
+  return new google.auth.GoogleAuth({
+    credentials: {
+      client_email: clientEmail,
+      private_key: privateKey,
+    },
+    scopes: [
+      "https://www.googleapis.com/auth/spreadsheets.readonly",
+    ],
+  });
+}
+
+/* =========================================================
+   HELPERS
+========================================================= */
+
+function clean(value) {
+  return String(value ?? "").trim();
+}
+
+function normalizeText(value) {
+  return clean(value)
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizePersonName(value) {
+  let name = normalizeText(value);
+
+  // status/icon di depan nama
+  name = name.replace(
+    /^[🟢🔵🔴⚪✓✔×✕•?]\s*/u,
+    ""
+  );
+
+  // assignment bracket di depan nama
+  name = name.replace(
+    /^\[[^\]]+\]\s*/u,
+    ""
+  );
+
+  // code di belakang nama
+  name = name.replace(
+    /\s+-\s+[A-Za-z0-9._/]+\s*$/i,
+    ""
+  );
+
+  return normalizeText(name);
+}
+
+function normalizeBranch(value) {
+  const text = normalizeText(value);
+
+  if (!text) return "";
+
+  if (/^barsi(?:\s+\d+)?$/i.test(text)) {
+    return "Barsi";
+  }
+
+  if (/^ng\s+barsi(?:\s+\d+)?$/i.test(text)) {
+    return "Barsi";
+  }
+
+  return text;
+}
+
+function canonicalBranch(value) {
+  return normalizeBranch(
+    String(value ?? "")
+      .replace(/^\[|\]$/g, "")
+      .trim()
+  );
+}
+
+function isAllowedBranch(branch) {
+  return ALLOWED_BRANCHES.has(
+    normalizeBranch(branch)
+  );
+}
+
+/* =========================================================
+   DATE
+========================================================= */
+
+function parseDateFromHeader(value) {
+  const text = normalizeText(value);
+
+  if (!text) return null;
+
+  /*
+    Contoh:
+    Sun, 04 Oct 2026 - 07:00
+    Sat, 10 Oct 2026 - 07:00
+  */
+
+  const match = text.match(
+    /(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})/i
+  );
+
+  if (!match) return null;
+
+  const day = Number(match[1]);
+  const monthName = match[2].toLowerCase();
+  const year = Number(match[3]);
+
+  const monthMap = {
+    jan: 0,
+    january: 0,
+    feb: 1,
+    february: 1,
+    mar: 2,
+    march: 2,
+    apr: 3,
+    april: 3,
+    may: 4,
+    jun: 5,
+    june: 5,
+    jul: 6,
+    july: 6,
+    aug: 7,
+    august: 7,
+    sep: 8,
+    sept: 8,
+    september: 8,
+    oct: 9,
+    october: 9,
+    nov: 10,
+    november: 10,
+    dec: 11,
+    december: 11,
+  };
+
+  if (!(monthName in monthMap)) {
+    return null;
+  }
+
+  const month = monthMap[monthName];
+
+  const date = new Date(
+    Date.UTC(year, month, day)
+  );
+
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return date;
+}
+
+function dateKeyFromDate(date) {
+  if (!date) return "";
+
+  const year = date.getUTCFullYear();
+  const month = String(
+    date.getUTCMonth() + 1
+  ).padStart(2, "0");
+  const day = String(
+    date.getUTCDate()
+  ).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
+
+function detectDateSource(dateColumn) {
+  const date = parseDateFromHeader(dateColumn);
+
+  if (!date) return "";
+
+  const day = date.getUTCDay();
+
+  // Saturday = Legacy
+  // Sunday   = NextGen
+  if (day === 6) return "Legacy";
+  if (day === 0) return "NextGen";
+
+  return "";
+}
+
+/* =========================================================
+   GOOGLE SHEET READER
+========================================================= */
+
+/*
+  IMPORTANT:
+  spreadsheetId sekarang dikirim dari month.sheetId.
+
+  Ini adalah fix utama bug:
+  month=2026-10 tidak boleh tetap membaca
+  spreadsheet utama yang berisi data April.
+*/
+
+async function readSheet(spreadsheetId, tabName) {
+  const auth = getGoogleAuth();
+
+  const sheets = google.sheets({
+    version: "v4",
+    auth,
+  });
+
+  const response =
+    await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `'${tabName}'`,
+      majorDimension: "ROWS",
+    });
+
+  return response.data.values || [];
+}
+
+/* =========================================================
+   HEADER HELPERS
+========================================================= */
+
+function findHeaderIndex(headers, candidates) {
+  const normalizedHeaders = headers.map((header) =>
+    normalizeText(header).toLowerCase()
+  );
+
+  for (const candidate of candidates) {
+    const index = normalizedHeaders.indexOf(
+      normalizeText(candidate).toLowerCase()
+    );
+
+    if (index !== -1) {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
+function findDateColumns(headers) {
+  const result = [];
+
+  headers.forEach((header, index) => {
+    const date = parseDateFromHeader(header);
+
+    if (!date) return;
+
+    result.push({
+      index,
+      header,
+      date,
+      dateKey: dateKeyFromDate(date),
+      source: detectDateSource(header),
+    });
+  });
+
+  return result;
+}
+
+/* =========================================================
+   ASSIGNMENT PARSER
+========================================================= */
+
+function parseAssignment(value) {
+  const text = normalizeText(value);
+
+  if (!text) {
+    return {
+      source: "",
+      branch: "",
+      category: "",
+      field: "",
+      role: "",
+      raw: "",
+    };
+  }
+
+  const brackets = [];
+
+  const regex = /\[([^\]]+)\]/g;
+
+  let match;
+
+  while ((match = regex.exec(text))) {
+    brackets.push(normalizeText(match[1]));
+  }
+
+  let source = "";
+  let branch = "";
+
+  for (const bracket of brackets) {
+    const lower = bracket.toLowerCase();
+
+    if (
+      lower === "legacy" ||
+      lower === "lgy"
+    ) {
+      source = "Legacy";
+      continue;
+    }
+
+    if (
+      /^ng(?:\s|$)/i.test(bracket)
+    ) {
+      source = "NextGen";
+
+      const ngBranch = bracket
+        .replace(/^ng\s*/i, "")
+        .trim();
+
+      if (ngBranch) {
+        branch = normalizeBranch(ngBranch);
+      }
+
+      continue;
+    }
+
+    const possibleBranch =
+      normalizeBranch(bracket);
+
+    if (
+      ALLOWED_BRANCHES.has(
+        possibleBranch
+      )
+    ) {
+      branch = possibleBranch;
+    }
+  }
+
+  if (!branch && brackets.length) {
+    for (const bracket of brackets) {
+      const possibleBranch =
+        normalizeBranch(bracket);
+
+      if (
+        ALLOWED_BRANCHES.has(
+          possibleBranch
+        )
+      ) {
+        branch = possibleBranch;
+        break;
+      }
+    }
+  }
+
+  if (!source) {
+    if (/^\[Legacy\]/i.test(text)) {
+      source = "Legacy";
+    } else if (/^\[NG\b/i.test(text)) {
+      source = "NextGen";
+    }
+  }
+
+  /*
+    Bu bagian mengikuti format assignment:
+
+    [NG Aruna 2] [Prophetic] Music - Singer
+
+    => source   NextGen
+    => branch   Aruna 2
+    => category Prophetic
+    => field    Music
+    => role     Singer
+  */
+
+  let remaining = text;
+
+  if (brackets.length) {
+    remaining = remaining
+      .replace(/\[[^\]]+\]/g, "")
+      .trim();
+  }
+
+  let category = "";
+  let field = "";
+  let role = "";
+
+  const parts = remaining
+    .split(/\s+/)
+    .filter(Boolean);
+
+  /*
+    Kalau ada pola:
+    Music - Singer
+  */
+  const dashMatch = remaining.match(
+    /^(.+?)\s+-\s+(.+?)$/i
+  );
+
+  if (dashMatch) {
+    const left = normalizeText(
+      dashMatch[1]
+    );
+    const right = normalizeText(
+      dashMatch[2]
+    );
+
+    const leftParts = left
+      .split(/\s+/)
+      .filter(Boolean);
+
+    if (leftParts.length >= 2) {
+      field = leftParts[0];
+      category = leftParts
+        .slice(1)
+        .join(" ");
+    } else {
+      field = left;
+    }
+
+    role = right;
+  } else {
+    if (parts.length >= 3) {
+      category = parts[0];
+      field = parts[1];
+      role = parts
+        .slice(2)
+        .join(" ");
+    } else if (parts.length === 2) {
+      field = parts[0];
+      role = parts[1];
+    } else if (parts.length === 1) {
+      role = parts[0];
+    }
+  }
+
+  return {
+    source,
+    branch: normalizeBranch(branch),
+    category: normalizeText(category),
+    field: normalizeText(field),
+    role: normalizeText(role),
+    raw: text,
+  };
+}
+
+/* =========================================================
+   POSITION / BRANCH
+========================================================= */
+
+function extractCabangFromPosisi(value) {
+  const text = normalizeText(value);
+
+  const match = text.match(
+    /^\[([^\]]+)\]/
+  );
+
+  if (!match) return "";
+
+  const inside = normalizeText(
+    match[1]
+  );
+
+  if (/^ng\s+/i.test(inside)) {
+    return normalizeBranch(
+      inside.replace(/^ng\s+/i, "")
+    );
+  }
+
+  if (/^legacy$/i.test(inside)) {
+    return "Legacy";
+  }
+
+  return normalizeBranch(inside);
+}
+
+/* =========================================================
+   AVAILABILITY PARSER
+========================================================= */
+
+function parseAvailability(value) {
+  const raw = clean(value);
+
+  if (
+    raw === "" ||
+    raw === "0"
+  ) {
+    return {
+      status: "available",
+      isAvailable: true,
+      isUnavailable: false,
+    };
+  }
+
+  const upper = raw.toUpperCase();
+
+  if (
+    upper === "X" ||
+    upper === "×" ||
+    upper === "NO"
+  ) {
+    return {
+      status: "unavailable",
+      isAvailable: false,
+      isUnavailable: true,
+    };
+  }
+
+  return {
+    status: "other",
+    isAvailable: false,
+    isUnavailable: false,
+  };
+}
+
+function isLeaveValue(value) {
+  const text = normalizeText(value)
+    .toLowerCase();
+
+  return [
+    "yes",
+    "y",
+    "iya",
+    "ya",
+    "izin",
+    "leave",
+    "true",
+    "1",
+  ].includes(text);
+}
+
+/* =========================================================
+   SCHEDULE
+========================================================= */
+
+function normalizeSchedulePersonName(value) {
+  return normalizePersonName(value)
+    .toLowerCase();
+}
+
+function buildScheduleIndexes(scheduleEntries) {
+  const byBranchNameDate = new Map();
+  const byNameDate = new Map();
+
+  for (const entry of scheduleEntries) {
+    if (!entry) continue;
+
+    const nameKey =
+      normalizeSchedulePersonName(
+        entry.name
+      );
+
+    const dateKey =
+      clean(entry.dateKey);
+
+    const branchKey =
+      canonicalBranch(entry.branch)
+        .toLowerCase();
+
+    if (!nameKey || !dateKey) {
+      continue;
+    }
+
+    const nameDateKey =
+      `${nameKey}|${dateKey}`;
+
+    const branchNameDateKey =
+      `${branchKey}|${nameKey}|${dateKey}`;
+
+    if (!byNameDate.has(nameDateKey)) {
+      byNameDate.set(
+        nameDateKey,
+        []
+      );
+    }
+
+    byNameDate
+      .get(nameDateKey)
+      .push(entry);
+
+    if (branchKey) {
+      if (
+        !byBranchNameDate.has(
+          branchNameDateKey
+        )
+      ) {
+        byBranchNameDate.set(
+          branchNameDateKey,
+          []
+        );
+      }
+
+      byBranchNameDate
+        .get(branchNameDateKey)
+        .push(entry);
+    }
+  }
+
+  return {
+    byBranchNameDate,
+    byNameDate,
+  };
+}
+
+function findScheduleMatch(
+  indexes,
+  {
+    name,
+    branch,
+    dateKey,
+  }
+) {
+  const nameKey =
+    normalizeSchedulePersonName(name);
+
+  const branchKey =
+    canonicalBranch(branch)
+      .toLowerCase();
+
+  const exactKey =
+    `${branchKey}|${nameKey}|${dateKey}`;
+
+  const exact =
+    indexes.byBranchNameDate.get(
+      exactKey
+    ) || [];
+
+  if (exact.length) {
+    return exact[0];
+  }
+
+  const fallbackKey =
+    `${nameKey}|${dateKey}`;
+
+  const fallback =
+    indexes.byNameDate.get(
+      fallbackKey
+    ) || [];
+
+  if (fallback.length === 1) {
+    return fallback[0];
+  }
+
+  if (fallback.length > 1) {
+    const sameBranch =
+      fallback.filter(
+        (item) =>
+          canonicalBranch(
+            item.branch
+          ).toLowerCase() ===
+          branchKey
+      );
+
+    if (sameBranch.length) {
+      return sameBranch[0];
+    }
+  }
+
+  return null;
+}
+
+/* =========================================================
+   AVAILABILITY MERGE
+========================================================= */
+
+function mergeAvailability(
+  current,
+  incoming
+) {
+  if (!current) {
+    return {
+      ...incoming,
+    };
+  }
+
+  const currentPriority =
+    STATUS_PRIORITY[
+      current.status
+    ] ??
+    STATUS_PRIORITY.other;
+
+  const incomingPriority =
+    STATUS_PRIORITY[
+      incoming.status
+    ] ??
+    STATUS_PRIORITY.other;
+
+  if (
+    incomingPriority >
+    currentPriority
+  ) {
+    return {
+      ...current,
+      ...incoming,
+    };
+  }
+
+  /*
+    Kalau priority sama, pertahankan data
+    yang sudah ada tetapi gabungkan info.
+  */
+
+  return {
+    ...current,
+    ...incoming,
+    status:
+      current.status,
+  };
+}
+
+/* =========================================================
+   FILTER DATA PARSER
+========================================================= */
+
+function parseFilterSheet(
+  rows,
+  tabName
+) {
+  if (!rows.length) {
+    return {
+      people: [],
+      dateColumns: [],
+    };
+  }
+
+  const headers = rows[0] || [];
+
+  const nameIndex =
+    findHeaderIndex(headers, [
+      "nama",
+      "name",
+      "crew",
+      "crew name",
+      "nama crew",
+    ]);
+
+  const assignmentIndex =
+    findHeaderIndex(headers, [
+      "prioritas",
+      "subdivisi",
+      "posisi",
+      "assignment",
+      "role",
+    ]);
+
+  const cabangIndex =
+    findHeaderIndex(headers, [
+      "cabang",
+      "branch",
+    ]);
+
+  const isiIzinIndex =
+    findHeaderIndex(headers, [
+      "isiIzin",
+      "isi izin",
+      "izin",
+      "is izin",
+    ]);
+
+  const alasanIzinIndex =
+    findHeaderIndex(headers, [
+      "alasanIzin",
+      "alasan izin",
+      "reason",
+    ]);
+
+  const dateColumns =
+    findDateColumns(headers);
+
+  const people = [];
+
+  for (
+    let rowIndex = 1;
+    rowIndex < rows.length;
+    rowIndex++
+  ) {
+    const row = rows[rowIndex] || [];
+
+    const rawName =
+      nameIndex >= 0
+        ? row[nameIndex]
+        : "";
+
+    const name =
+      normalizePersonName(rawName);
+
+    if (!name) {
+      continue;
+    }
+
+    const rawAssignment =
+      assignmentIndex >= 0
+        ? row[assignmentIndex]
+        : "";
+
+    const assignment =
+      parseAssignment(
+        rawAssignment
+      );
+
+    let branch =
+      assignment.branch;
+
+    if (!branch && cabangIndex >= 0) {
+      branch = canonicalBranch(
+        row[cabangIndex]
+      );
+    }
+
+    if (!branch) {
+      branch =
+        extractCabangFromPosisi(
+          rawAssignment
+        );
+    }
+
+    branch =
+      normalizeBranch(branch);
+
+    if (!isAllowedBranch(branch)) {
+      continue;
+    }
+
+    const isiIzin =
+      isiIzinIndex >= 0
+        ? clean(row[isiIzinIndex])
+        : "";
+
+    const alasanIzin =
+      alasanIzinIndex >= 0
+        ? clean(row[alasanIzinIndex])
+        : "";
+
+    const hasPermissionFlag =
+      isLeaveValue(isiIzin);
+
+    const availability = {};
+
+    for (const dateColumn of dateColumns) {
+      const raw =
+        row[dateColumn.index] ?? "";
+
+      const parsed =
+        parseAvailability(raw);
+
+      /*
+        X + isiIzin = leave
+        tetapi hanya untuk tanggal X tersebut.
+
+        Ini penting:
+        jangan membuat seluruh bulan menjadi leave.
+      */
+
+      const isLeave =
+        hasPermissionFlag &&
+        parsed.status ===
+          "unavailable";
+
+      availability[
+        dateColumn.dateKey
+      ] = {
+        date: dateColumn.header,
+        dateKey:
+          dateColumn.dateKey,
+        source:
+          dateColumn.source,
+        raw: clean(raw),
+
+        status: isLeave
+          ? "leave"
+          : parsed.status,
+
+        isAvailable:
+          parsed.isAvailable &&
+          !isLeave,
+
+        isUnavailable:
+          parsed.isUnavailable,
+
+        isLeave,
+
+        leaveInfo: isLeave
+          ? {
+              isiIzin,
+              alasanIzin,
+              date:
+                dateColumn.header,
+              dateKey:
+                dateColumn.dateKey,
+            }
+          : null,
+      };
+    }
+
+    people.push({
+      name,
+      branch,
+      source:
+        assignment.source,
+      category:
+        assignment.category,
+      field:
+        assignment.field,
+      role:
+        assignment.role,
+      assignment:
+        assignment.raw,
+      tab:
+        tabName,
+      rowIndex,
+      isiIzin,
+      alasanIzin,
+      availability,
+    });
+  }
+
+  return {
+    people,
+    dateColumns,
+  };
+}
+
+/* =========================================================
+   SCHEDULE SHEET PARSER
+========================================================= */
+
+function parseScheduleSheet(
+  rows,
+  tabName
+) {
+  if (!rows.length) {
+    return [];
+  }
+
+  const headers = rows[0] || [];
+
+  const nameIndex =
+    findHeaderIndex(headers, [
+      "nama",
+      "name",
+      "crew",
+      "crew name",
+      "nama crew",
+    ]);
+
+  const posisiIndex =
+    findHeaderIndex(headers, [
+      "posisi",
+      "position",
+      "assignment",
+      "role",
+    ]);
+
+  const cabangIndex =
+    findHeaderIndex(headers, [
+      "cabang",
+      "branch",
+    ]);
+
+  const dateColumns =
+    findDateColumns(headers);
+
+  const entries = [];
+
+  /*
+    Schedule sering memakai merged cells.
+    Jadi Cabang/Posisi perlu carry-forward.
+  */
+
+  let lastBranch = "";
+  let lastPosition = "";
+
+  for (
+    let rowIndex = 1;
+    rowIndex < rows.length;
+    rowIndex++
+  ) {
+    const row = rows[rowIndex] || [];
+
+    let branch =
+      cabangIndex >= 0
+        ? clean(row[cabangIndex])
+        : "";
+
+    let position =
+      posisiIndex >= 0
+        ? clean(row[posisiIndex])
+        : "";
+
+    if (branch) {
+      lastBranch =
+        canonicalBranch(branch);
+    } else {
+      branch = lastBranch;
+    }
+
+    if (position) {
+      lastPosition = position;
+    } else {
+      position = lastPosition;
+    }
+
+    if (!branch && position) {
+      branch =
+        extractCabangFromPosisi(
+          position
+        );
+    }
+
+    branch =
+      normalizeBranch(branch);
+
+    if (!isAllowedBranch(branch)) {
+      continue;
+    }
+
+    const assignment =
+      parseAssignment(position);
+
+    for (const dateColumn of dateColumns) {
+      const value =
+        row[dateColumn.index];
+
+      if (
+        value === undefined ||
+        clean(value) === ""
+      ) {
+        continue;
+      }
+
+      /*
+        Nama biasanya berada di kolom tertentu,
+        tetapi beberapa schedule menggunakan
+        assignment/name dari row.
+      */
+
+      let name =
+        nameIndex >= 0
+          ? normalizePersonName(
+              row[nameIndex]
+            )
+          : "";
+
+      if (!name) {
+        continue;
+      }
+
+      entries.push({
+        name,
+        branch,
+        source:
+          dateColumn.source ||
+          assignment.source ||
+          "",
+        date:
+          dateColumn.header,
+        dateKey:
+          dateColumn.dateKey,
+        raw:
+          clean(value),
+        position,
+        category:
+          assignment.category,
+        field:
+          assignment.field,
+        role:
+          assignment.role,
+        tab: tabName,
+        rowIndex,
+      });
+    }
+  }
+
+  return entries;
+}
+
+/* =========================================================
+   BUILD RESULT
+========================================================= */
+
+function combinePeople(
+  parsedSheets,
+  scheduleIndexes
+) {
+  const peopleMap = new Map();
+
+  for (const parsed of parsedSheets) {
+    for (const person of parsed.people) {
+      const key =
+        `${normalizePersonName(
+          person.name
+        ).toLowerCase()}|${normalizeBranch(
+          person.branch
+        ).toLowerCase()}|${normalizeText(
+          person.category
+        ).toLowerCase()}|${normalizeText(
+          person.field
+        ).toLowerCase()}|${normalizeText(
+          person.role
+        ).toLowerCase()}`;
+
+      let target =
+        peopleMap.get(key);
+
+      if (!target) {
+        target = {
+          name: person.name,
+          branch: person.branch,
+          source: person.source,
+          category: person.category,
+          field: person.field,
+          role: person.role,
+          assignment:
+            person.assignment,
+          isiIzin:
+            person.isiIzin,
+          alasanIzin:
+            person.alasanIzin,
+          availability: {},
+        };
+
+        peopleMap.set(
+          key,
+          target
+        );
+      }
+
+      for (const [
+        dateKey,
+        incoming,
+      ] of Object.entries(
+        person.availability
+      )) {
+        const scheduled =
+          findScheduleMatch(
+            scheduleIndexes,
+            {
+              name:
+                person.name,
+              branch:
+                person.branch,
+              dateKey,
+            }
+          );
+
+        let status =
+          incoming.status;
+
+        /*
+          Priority:
+          leave
+          > unavailable
+          > scheduled
+          > available
+          > other
+        */
+
+        if (
+          incoming.isLeave
+        ) {
+          status = "leave";
+        } else if (
+          incoming.isUnavailable
+        ) {
+          status = "unavailable";
+        } else if (
+          scheduled
+        ) {
+          status = "scheduled";
+        } else if (
+          incoming.isAvailable
+        ) {
+          status = "available";
+        } else {
+          status = "other";
+        }
+
+        const merged = {
+          ...incoming,
+          status,
+
+          scheduled:
+            Boolean(scheduled),
+
+          schedule:
+            scheduled
+              ? {
+                  source:
+                    scheduled.source,
+                  raw:
+                    scheduled.raw,
+                  position:
+                    scheduled.position,
+                  date:
+                    scheduled.date,
+                  dateKey:
+                    scheduled.dateKey,
+                }
+              : null,
+        };
+
+        target.availability[
+          dateKey
+        ] = mergeAvailability(
+          target.availability[
+            dateKey
+          ],
+          merged
+        );
+      }
+    }
+  }
+
+  return Array.from(
+    peopleMap.values()
+  );
+}
+
+/* =========================================================
+   MAIN LOADER
+========================================================= */
+
+async function loadFilterData(
+  month
+) {
+  /*
+    ========================================================
+    FIX UTAMA:
+    spreadsheet sumber = month.sheetId
+    ========================================================
+  */
+
+  const sourceSpreadsheetId =
+    month.sheetId ||
+    SPREADSHEET_ID;
+
+  const [
+    lgyFilterRows,
+    ngFilterRows,
+    lgyScheduleRows,
+    ngScheduleRows,
+  ] = await Promise.all([
+    readSheet(
+      sourceSpreadsheetId,
+      "[LGY] Filter"
+    ),
+
+    readSheet(
+      sourceSpreadsheetId,
+      "[NG] Filter"
+    ),
+
+    readSheet(
+      sourceSpreadsheetId,
+      "[LGY] Schedule"
+    ),
+
+    readSheet(
+      sourceSpreadsheetId,
+      "[NG] Schedule"
+    ),
+  ]);
+
+  const parsedLGY =
+    parseFilterSheet(
+      lgyFilterRows,
+      "[LGY] Filter"
+    );
+
+  const parsedNG =
+    parseFilterSheet(
+      ngFilterRows,
+      "[NG] Filter"
+    );
+
+  const scheduleLGY =
+    parseScheduleSheet(
+      lgyScheduleRows,
+      "[LGY] Schedule"
+    );
+
+  const scheduleNG =
+    parseScheduleSheet(
+      ngScheduleRows,
+      "[NG] Schedule"
+    );
+
+  const scheduleEntries = [
+    ...scheduleLGY,
+    ...scheduleNG,
+  ];
+
+  const scheduleIndexes =
+    buildScheduleIndexes(
+      scheduleEntries
+    );
+
+  const people =
+    combinePeople(
+      [
+        parsedLGY,
+        parsedNG,
+      ],
+      scheduleIndexes
+    );
+
+  /*
+    Semua tanggal yang tersedia dari Filter.
+    Deduplicate berdasarkan dateKey.
+  */
+
+  const dateMap = new Map();
+
+  for (const parsed of [
+    parsedLGY,
+    parsedNG,
+  ]) {
+    for (const dateColumn of parsed.dateColumns) {
+      if (
+        !dateMap.has(
+          dateColumn.dateKey
+        )
+      ) {
+        dateMap.set(
+          dateColumn.dateKey,
+          dateColumn
+        );
+      }
+    }
+  }
+
+  const dates = Array.from(
+    dateMap.values()
+  ).sort(
+    (a, b) =>
+      a.date.getTime() -
+      b.date.getTime()
+  );
+
+  const scheduledPeople = new Set();
+  const leavePeople = new Set();
+
+  for (const person of people) {
+    for (const item of Object.values(
+      person.availability
+    )) {
+      if (item.scheduled) {
+        scheduledPeople.add(
+          person.name
+        );
+      }
+
+      if (item.isLeave) {
+        leavePeople.add(
+          person.name
+        );
+      }
+    }
+  }
+
+  return {
+    sourceSpreadsheetId,
+
+    tabsScanned: [
+      "[LGY] Filter",
+      "[NG] Filter",
+    ],
+
+    scheduleTabsScanned: [
+      "[LGY] Schedule",
+      "[NG] Schedule",
+    ],
+
+    totalRoleRowsScanned:
+      lgyFilterRows.length +
+      ngFilterRows.length,
+
+    totalScheduleEntriesScanned:
+      scheduleEntries.length,
+
+    scheduledPeopleCount:
+      scheduledPeople.size,
+
+    leavePeopleCount:
+      leavePeople.size,
+
+    dates,
+
+    people,
+  };
+}
+
+/* =========================================================
+   API HANDLER
+========================================================= */
 
 export default async function handler(
   req,
   res
 ) {
   try {
-    if (
-      MONTHS.length === 0
-    ) {
-      return res.status(500).json({
-        error:
-          "Belum ada bulan yang dikonfigurasi di MONTHS (api/filter.js).",
+    if (req.method !== "GET") {
+      return res.status(405).json({
+        error: "Method not allowed",
       });
     }
 
+    const requestedMonth =
+      clean(req.query.month);
 
-    const requestedMonthId =
-      typeof req.query.month ===
-      "string"
-        ? req.query.month
-        : null;
-
+    const refresh =
+      String(
+        req.query.refresh || ""
+      ) === "1";
 
     const month =
       MONTHS.find(
-        (m) =>
-          m.id ===
-          requestedMonthId
-      ) ||
-      MONTHS[0];
+        (item) =>
+          item.id === requestedMonth
+      ) || MONTHS[0];
 
-
-    const forceRefresh =
-      req.query.refresh === "1";
-
-
-    const debug =
-      req.query.debug === "1";
-
-
-    /*
-     * Cache.
-     */
-    if (
-      !forceRefresh &&
-      !debug
-    ) {
-      const cached =
-        getCached(
-          month.id
-        );
-
-
-      if (cached) {
-        return res
-          .status(200)
-          .json({
-            ...cached,
-            fromCache: true,
-          });
-      }
-    }
-
-
-    const auth =
-      getAuth();
-
-
-    const sheets =
-      google.sheets({
-        version: "v4",
-        auth,
+    if (!month) {
+      return res.status(400).json({
+        error:
+          "Month tidak tersedia.",
       });
-
-
-    /*
-     * Ambil metadata spreadsheet.
-     */
-    const meta =
-      await sheets.spreadsheets.get(
-        {
-          spreadsheetId:
-            month.sheetId,
-        }
-      );
-
-
-    const allTabNames =
-      meta.data.sheets.map(
-        (sheet) =>
-          sheet.properties.title
-      );
-
-
-    const tabNames =
-      allTabNames.filter(
-        isFilterTab
-      );
-
-
-    let allRoleRows = [];
-
-    const debugInfo = [];
-
-
-    /*
-     * Scan semua Filter tab.
-     */
-    for (
-      const tabName of tabNames
-    ) {
-      const range =
-        `'${tabName}'!A1:ZZ2000`;
-
-
-      const resp =
-        await sheets.spreadsheets.values.get(
-          {
-            spreadsheetId:
-              month.sheetId,
-
-            range,
-          }
-        );
-
-
-      const rows =
-        resp.data.values ||
-        [];
-
-
-      const source =
-        detectSource(
-          tabName
-        );
-
-
-      const headerIdx =
-        findHeaderRowIndex(
-          rows,
-          month.id
-        );
-
-
-      const headerRow =
-        headerIdx >= 0
-          ? rows[headerIdx]
-          : [];
-
-
-      const dateCols =
-        findDateColumns(
-          headerRow,
-          month.id
-        );
-
-
-      if (debug) {
-        debugInfo.push({
-          tabName,
-
-          source,
-
-          headerRowIndex:
-            headerIdx,
-
-          allHeaderCells:
-            headerRow,
-
-          dateColsDetected:
-            dateCols.map(
-              (date) => ({
-                label:
-                  date.label,
-
-                dateKey:
-                  date.dateKey,
-
-                source:
-                  date.source,
-              })
-            ),
-        });
-      }
-
-
-      const roleRows =
-        extractRoleRowsFromSheet(
-          rows,
-          month.id,
-          source
-        );
-
-
-      allRoleRows =
-        allRoleRows.concat(
-          roleRows
-        );
     }
 
-
     /*
-     * Group per branch.
-     */
-    let branches =
-      groupByBranch(
-        allRoleRows
+      Cache sekarang ikut month + spreadsheet ID.
+      Jadi Oktober dan September tidak mungkin
+      menggunakan cache data yang salah.
+    */
+
+    const sourceSpreadsheetId =
+      month.sheetId ||
+      SPREADSHEET_ID;
+
+    const cacheKey =
+      `filter:${month.id}:${sourceSpreadsheetId}`;
+
+    if (!refresh) {
+      const cached =
+        cache.get(cacheKey);
+
+      if (
+        cached &&
+        Date.now() -
+          cached.timestamp <
+          CACHE_TTL
+      ) {
+        return res.status(200).json(
+          cached.data
+        );
+      }
+    }
+
+    const loaded =
+      await loadFilterData(
+        month
       );
 
-
-    /*
-     * Hanya branch CISS.
-     */
-    branches =
-      branches.filter(
-        (branch) =>
-          ALLOWED_BRANCH_LABELS.includes(
-            branch.branchLabel
-          )
-      );
-
-
-    /*
-     * Payload.
-     */
-    const payload = {
+    const data = {
       syncedAt:
         new Date().toISOString(),
 
       month: {
-        id:
-          month.id,
-
-        label:
-          month.label,
+        id: month.id,
+        label: month.label,
+        sheetId:
+          month.sheetId,
       },
 
       availableMonths:
-        MONTHS.map(
-          (m) => ({
-            id:
-              m.id,
+        MONTHS.map((item) => ({
+          id: item.id,
+          label: item.label,
+          sheetId:
+            item.sheetId,
+        })),
 
-            label:
-              m.label,
+      tabsScanned:
+        loaded.tabsScanned,
+
+      scheduleTabsScanned:
+        loaded.scheduleTabsScanned,
+
+      totalRoleRowsScanned:
+        loaded.totalRoleRowsScanned,
+
+      totalScheduleEntriesScanned:
+        loaded.totalScheduleEntriesScanned,
+
+      scheduledPeopleCount:
+        loaded.scheduledPeopleCount,
+
+      leavePeopleCount:
+        loaded.leavePeopleCount,
+
+      dates:
+        loaded.dates.map(
+          (item) => ({
+            date:
+              item.header,
+            dateKey:
+              item.dateKey,
+            source:
+              item.source,
           })
         ),
 
-      tabsScanned:
-        tabNames,
-
-      totalRoleRowsScanned:
-        allRoleRows.length,
-
-      /*
-       * Data utama Filter.
-       */
-      branches,
-
-      /*
-       * Metadata untuk AI.
-       */
-      dataCapabilities: {
-        includesAllPriorities:
-          true,
-
-        includesUnavailable:
-          true,
-
-        includesLeave:
-          true,
-
-        includesAvailability:
-          true,
-
-        includesCategories:
-          true,
-
-        includesSource:
-          true,
-      },
-
-      ...(debug
-        ? {
-            debug:
-              debugInfo,
-          }
-        : {}),
+      people:
+        loaded.people,
     };
 
+    cache.set(cacheKey, {
+      timestamp: Date.now(),
+      data,
+    });
 
     /*
-     * Simpan cache.
-     */
-    if (!debug) {
-      setCached(
-        month.id,
-        payload
-      );
+      Cache cleanup sederhana.
+    */
+
+    for (const [
+      key,
+      value,
+    ] of cache.entries()) {
+      if (
+        Date.now() -
+          value.timestamp >
+        CACHE_TTL
+      ) {
+        cache.delete(key);
+      }
     }
 
-
-    return res
-      .status(200)
-      .json(payload);
-
-  } catch (err) {
+    return res.status(200).json(
+      data
+    );
+  } catch (error) {
     console.error(
       "FILTER API ERROR:",
-      err
+      error
     );
 
-    return res
-      .status(500)
-      .json({
-        error:
-          err.message ||
-          "Gagal mengambil data Filter.",
-      });
+    return res.status(500).json({
+      error:
+        "Gagal mengambil data filter.",
+      detail:
+        error?.message ||
+        String(error),
+    });
   }
 }
